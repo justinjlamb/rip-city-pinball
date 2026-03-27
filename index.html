@@ -614,10 +614,10 @@ function createPinball() {
     label: 'pinball',
     collisionFilter: { category: CAT.BALL, mask: LAYER_MASK.launcher },
     render: { visible: false },
-    restitution: 0.3,        // Some bounce off walls
-    friction: 0.005,         // Very low — glossy playfield, ball should glide
-    frictionAir: 0.002,      // Minimal air drag — ball maintains speed
-    density: 0.002           // Lighter — moves faster, more responsive
+    restitution: 0,          // Zero — all bounce comes from walls/bumpers
+    friction: 0.05,          // Low — glossy playfield
+    frictionAir: 0.015,      // Slight air resistance
+    density: 0.003           // Heavier — more momentum, better flipper feel
   });
   World.add(world, pinball);
   Body.setPosition(pinball, { x: -200, y: -200 });
@@ -651,9 +651,9 @@ function launchPinball() {
 // Phase 4: Plunger polish — tuned velocity range
 function firePinball() {
   const power = Math.max(0.2, plungerPower);
-  const vel = -45 - (power * 50); // range: -54 to -95 (much stronger)
+  const vel = -12 - (power * 33); // range: -19 to -45 (playbook values)
   Body.setStatic(pinball, false);
-  Body.setVelocity(pinball, { x: -2 - power * 3, y: vel });
+  Body.setVelocity(pinball, { x: -1 - power * 2, y: vel });
   gameState = 'play';
   plungerPower = 0;
   plungerCharging = false;
@@ -729,7 +729,7 @@ function triggerMultiball() {
         label: 'multiball',
         collisionFilter: { category: CAT.BALL, mask: LAYER_MASK.playfield },
         render: { visible: false },
-        restitution: 0.3, friction: 0.005, frictionAir: 0.002, density: 0.002
+        restitution: 0, friction: 0.05, frictionAir: 0.015, density: 0.003
       }
     );
     Body.setVelocity(mb, { x: rand(-5, 5), y: rand(-15, -8) });
