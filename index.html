@@ -767,12 +767,14 @@ function createEvents() {
       } else if (bodyA.label === 'bumper') {
         pingBumper(bodyA, bodyB);
       } else if (bodyA.label && bodyA.label.startsWith('slingshot')) {
-        // Phase 2: Slingshot collision
+        // Slingshot: trampoline kick — override velocity directly
         const dx = bodyB.position.x - bodyA.position.x;
         const dy = bodyB.position.y - bodyA.position.y;
         const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-        Body.applyForce(bodyB, bodyB.position, {
-          x: (dx/dist) * 0.06, y: (dy/dist) * 0.06
+        const slingSpeed = 22; // stronger than bumpers — these are trampolines
+        Body.setVelocity(bodyB, {
+          x: (dx/dist) * slingSpeed,
+          y: (dy/dist) * slingSpeed
         });
         registerHit(POINTS.SLINGSHOT, 'SLINGSHOT');
         shake = 8;
@@ -1054,11 +1056,15 @@ function pingBumper(bumperBody, ballBody) {
   emitParticles(bumperBody.position.x, bumperBody.position.y, RED_GLOW, 15, 8);
   sndBumper();
 
-  // Phase 2: Enhanced bumper directional kick
+  // Thumper bumper: override ball velocity directly (like real pinball pop bumpers)
   const dx = ballBody.position.x - bumperBody.position.x;
   const dy = ballBody.position.y - bumperBody.position.y;
   const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-  Body.applyForce(ballBody, ballBody.position, { x: (dx/dist) * 0.08, y: (dy/dist) * 0.08 });
+  const kickSpeed = 18; // direct velocity — ball LAUNCHES off bumpers
+  Body.setVelocity(ballBody, {
+    x: (dx/dist) * kickSpeed,
+    y: (dy/dist) * kickSpeed
+  });
 
   if (TEST_MODE) testBallBumperHits++;
 }
