@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Layer 1 (Always) — Wall Editor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #ccc; height: 100vh; overflow: hidden; display: flex; }
+  .sidebar { width: 320px; background: #1a1a1a; overflow-y: auto; padding: 12px; flex-shrink: 0; border-right: 1px solid #333; }
+  .sidebar h2 { font-size: 14px; color: #0ff; margin: 12px 0 6px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  .sidebar h2:first-child { margin-top: 0; }
+  .canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+  canvas { display: block; cursor: crosshair; }
+  .hint { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #666; pointer-events: none; }
+  .output-wrap { position: absolute; bottom: 0; left: 320px; right: 0; background: #1a1a1aee; border-top: 1px solid #333; padding: 8px 12px; max-height: 200px; overflow-y: auto; }
+  .output-wrap pre { font-size: 11px; font-family: 'SF Mono', monospace; color: #0f0; white-space: pre-wrap; }
+  .copy-btn { position: absolute; top: 8px; right: 12px; background: #0ff; color: #000; border: none; padding: 4px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600; }
+  .copy-btn:active { background: #0a8; }
+  .add-btns { display: flex; gap: 4px; margin: 8px 0; }
+  .add-btns button { flex: 1; background: #333; color: #ccc; border: 1px solid #555; padding: 4px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .add-btns button:hover { background: #444; }
+  .zoom-info { position: absolute; top: 8px; right: 8px; font-size: 11px; color: #666; pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <h2>WALLS (drag endpoints)</h2>
+  <div id="wall-list"></div>
+  <h2>CURVES (drag 3 points)</h2>
+  <div id="curve-list"></div>
+  <div class="add-btns">
+    <button onclick="addWall()">+ Wall</button>
+    <button onclick="addCurve()">+ Curve</button>
+  </div>
+</div>
+<div class="canvas-wrap">
+  <canvas id="C"></canvas>
+  <div class="hint">Drag endpoints. Alt+drag or middle-click to pan. Scroll to zoom. Click sidebar to select.</div>
+  <div class="zoom-info" id="zoom-info">100%</div>
+</div>
+<div class="output-wrap">
+  <button class="copy-btn" onclick="copyOutput()">Copy Code</button>
+  <pre id="output"></pre>
+</div>
+<script>
+const IMG_W = 1748, IMG_H = 2432;
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+
+const img = new Image();
+img.src = '../table.png';
+let imgLoaded = false;
+img.onload = () => { imgLoaded = true; render(); };
+
+const walls = [
+  { pts: [55, 1658, 47, 2042],     label: 'Left Wall' },
+  { pts: [1530, 1535, 1528, 2076], label: 'Right Wall' },
+  { pts: [9, 2017, 642, 2414],     label: 'Left Bowl' },
+  { pts: [1526, 2085, 1047, 2423], label: 'Right Bowl' },
+  { pts: [435, 1673, 567, 1974],   label: 'Left Sling Top' },
+  { pts: [166, 1888, 556, 2149],   label: 'Left Sling Bot' },
+  { pts: [1274, 1671, 1141, 1979], label: 'Right Sling Top' },
+  { pts: [1390, 1975, 1138, 2149], label: 'Right Sling Bot' },
+  { pts: [169, 1656, 166, 1850],   label: 'Left Outlane' },
+  { pts: [1403, 1776, 1403, 1946], label: 'Right Outlane' },
+  { pts: [403, 1691, 406, 1902],   label: 'Wall 130' },
+  { pts: [401, 1920, 549, 2013],   label: 'Wall 131' },
+  { pts: [1161, 2004, 1299, 1915], label: 'Wall 132' },
+  { pts: [1311, 1748, 1302, 1911], label: 'Wall 133' },
+  { pts: [360, 385, 426, 675],     label: 'Wall 110 (LR Right Entry)' },
+  { pts: [243, 401, 302, 870],     label: 'Wall 111 (LR Left Entry)' },
+  { pts: [73, 1444, 77, 201],      label: 'Wall 107 (LR Right Outer)' },
+  { pts: [191, 1377, 182, 510],    label: 'Wall 109 (LR Left Inner)' },
+  { pts: [212, 1304, 302, 879],    label: 'Wall 123' },
+];
+
+const curves = [
+  { pts: [188, 525, 204, -60, 245, 403],     n: 10, label: 'Curve 108 (LR Left)' },
+  { pts: [227, 70, 392, 59, 361, 390],        n: 10, label: 'Curve 106 (LR Right)' },
+  { pts: [77, 204, 91, 65, 218, 70],          n: 10, label: 'Curve 105 (LR Right Top)' },
+  { pts: [199, 1392, 229, 1544, 401, 1678],   n: 10, label: 'Curve 115 (LR Left Exit)' },
+  { pts: [317, 1782, 174, 1707, 75, 1448],    n: 10, label: 'Curve 114 (LR Right Exit)' },
+  { pts: [60, 1649, 53, 1465, 212, 1302],     n: 10, label: 'Curve 134' },
+];
+
+let selectedIdx = -1, selectedType = 'wall';
+let dragging = null;
+let zoom = 1, panX = 0, panY = 0;
+let isPanning = false, lastMouse = { x: 0, y: 0 };
+let nextId = 200;
+
+function toScreen(ix, iy) { return { x: ix * zoom + panX, y: iy * zoom + panY }; }
+function toImage(sx, sy) { return { x: (sx - panX) / zoom, y: (sy - panY) / zoom }; }
+
+function resize() {
+  const wrap = canvas.parentElement;
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  if (zoom === 1 && panX === 0 && panY === 0) {
+    zoom = Math.min(canvas.width / IMG_W, canvas.height / IMG_H) * 0.95;
+    panX = (canvas.width - IMG_W * zoom) / 2;
+    panY = (canvas.height - IMG_H * zoom) / 2;
+  }
+  render();
+}
+window.addEventListener('resize', resize);
+setTimeout(resize, 50);
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (imgLoaded) {
+    ctx.globalAlpha = 0.6;
+    ctx.drawImage(img, panX, panY, IMG_W * zoom, IMG_H * zoom);
+    ctx.globalAlpha = 1;
+  }
+
+  walls.forEach((w, i) => {
+    const isSel = selectedType === 'wall' && selectedIdx === i;
+    const p1 = toScreen(w.pts[0], w.pts[1]);
+    const p2 = toScreen(w.pts[2], w.pts[3]);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+    ctx.strokeStyle = isSel ? '#fff' : '#0ff';
+    ctx.lineWidth = isSel ? 3 : 2;
+    ctx.globalAlpha = isSel ? 1 : 0.6;
+    ctx.stroke();
+    [p1, p2].forEach(p => {
+      ctx.beginPath(); ctx.arc(p.x, p.y, isSel ? 7 : 5, 0, Math.PI * 2);
+      ctx.fillStyle = isSel ? '#fff' : '#0ff';
+      ctx.globalAlpha = isSel ? 1 : 0.7; ctx.fill();
+    });
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    ctx.font = (isSel ? 'bold ' : '') + Math.max(9, 11 * zoom) + 'px system-ui';
+    ctx.fillStyle = isSel ? '#fff' : '#0ff';
+    ctx.globalAlpha = isSel ? 1 : 0.5;
+    ctx.textAlign = 'center';
+    ctx.fillText(w.label, mx, my - 8 * zoom);
+    ctx.globalAlpha = 1;
+  });
+
+  curves.forEach((c, i) => {
+    const isSel = selectedType === 'curve' && selectedIdx === i;
+    const p1 = toScreen(c.pts[0], c.pts[1]);
+    const cp = toScreen(c.pts[2], c.pts[3]);
+    const p2 = toScreen(c.pts[4], c.pts[5]);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.quadraticCurveTo(cp.x, cp.y, p2.x, p2.y);
+    ctx.strokeStyle = isSel ? '#fff' : '#e040fb';
+    ctx.lineWidth = isSel ? 3 : 2;
+    ctx.globalAlpha = isSel ? 1 : 0.6;
+    ctx.stroke();
+    ctx.fillStyle = isSel ? '#fff' : '#e040fb';
+    ctx.globalAlpha = isSel ? 1 : 0.7;
+    ctx.fillRect(p1.x - 5, p1.y - 5, 10, 10);
+    ctx.fillRect(p2.x - 5, p2.y - 5, 10, 10);
+    ctx.save(); ctx.translate(cp.x, cp.y); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#ff0'; ctx.globalAlpha = isSel ? 1 : 0.6;
+    ctx.fillRect(-5, -5, 10, 10); ctx.restore();
+    ctx.strokeStyle = '#ff0'; ctx.lineWidth = 1; ctx.globalAlpha = 0.2;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(cp.x, cp.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cp.x, cp.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = (isSel ? 'bold ' : '') + Math.max(9, 11 * zoom) + 'px system-ui';
+    ctx.fillStyle = isSel ? '#fff' : '#e040fb';
+    ctx.globalAlpha = isSel ? 1 : 0.5; ctx.textAlign = 'center';
+    ctx.fillText(c.label, cp.x, cp.y - 12 * zoom);
+    ctx.globalAlpha = 1;
+  });
+
+  // Flipper hinges for reference
+  [{ x: 560, y: 2200, l: 'L Flip' }, { x: 1120, y: 2200, l: 'R Flip' }].forEach(h => {
+    const p = toScreen(h.x, h.y);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ff0'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.font = '10px system-ui'; ctx.fillStyle = '#ff0'; ctx.globalAlpha = 0.6;
+    ctx.textAlign = 'center'; ctx.fillText(h.l, p.x, p.y - 10); ctx.globalAlpha = 1;
+  });
+
+  updateSidebar();
+  updateOutput();
+  document.getElementById('zoom-info').textContent = Math.round(zoom * 100) + '%';
+}
+
+function updateSidebar() {
+  const wl = document.getElementById('wall-list');
+  while (wl.firstChild) wl.removeChild(wl.firstChild);
+  walls.forEach((w, i) => {
+    const div = document.createElement('div');
+    div.className = 'wall-item' + (selectedType === 'wall' && selectedIdx === i ? ' selected' : '');
+    div.style.cssText = 'font-size:11px;padding:4px 6px;margin:2px 0;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;' + (selectedType === 'wall' && selectedIdx === i ? 'background:#0ff3;border:1px solid #0ff;' : '');
+    div.onclick = () => { selectedType = 'wall'; selectedIdx = i; render(); };
+    const name = document.createElement('span');
+    name.textContent = w.label;
+    name.style.cssText = 'color:#0ff;font-weight:600;font-size:11px;';
+    const coords = document.createElement('span');
+    coords.textContent = '[' + w.pts.map(Math.round).join(', ') + ']';
+    coords.style.cssText = 'color:#888;font-size:10px;font-family:monospace;';
+    const del = document.createElement('button');
+    del.textContent = '\u2715';
+    del.style.cssText = 'background:#600;color:#faa;border:none;padding:2px 6px;border-radius:3px;font-size:10px;cursor:pointer;';
+    del.onclick = (e) => { e.stopPropagation(); walls.splice(i, 1); if (selectedIdx >= walls.length) selectedIdx = walls.length - 1; render(); };
+    div.appendChild(name); div.appendChild(coords); div.appendChild(del);
+    wl.appendChild(div);
+  });
+
+  const cl = document.getElementById('curve-list');
+  while (cl.firstChild) cl.removeChild(cl.firstChild);
+  curves.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'curve-item' + (selectedType === 'curve' && selectedIdx === i ? ' selected' : '');
+    div.style.cssText = 'font-size:11px;padding:4px 6px;margin:2px 0;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;' + (selectedType === 'curve' && selectedIdx === i ? 'background:#e040fb22;border:1px solid #e040fb;' : '');
+    div.onclick = () => { selectedType = 'curve'; selectedIdx = i; render(); };
+    const name = document.createElement('span');
+    name.textContent = c.label;
+    name.style.cssText = 'color:#e040fb;font-weight:600;font-size:11px;';
+    const coords = document.createElement('span');
+    coords.textContent = '[' + c.pts.map(Math.round).join(', ') + ']';
+    coords.style.cssText = 'color:#888;font-size:10px;font-family:monospace;';
+    const del = document.createElement('button');
+    del.textContent = '\u2715';
+    del.style.cssText = 'background:#600;color:#faa;border:none;padding:2px 6px;border-radius:3px;font-size:10px;cursor:pointer;';
+    del.onclick = (e) => { e.stopPropagation(); curves.splice(i, 1); if (selectedIdx >= curves.length) selectedIdx = curves.length - 1; render(); };
+    div.appendChild(name); div.appendChild(coords); div.appendChild(del);
+    cl.appendChild(div);
+  });
+}
+
+function hitTest(sx, sy) {
+  for (let i = 0; i < walls.length; i++) {
+    const w = walls[i];
+    const p1 = toScreen(w.pts[0], w.pts[1]);
+    const p2 = toScreen(w.pts[2], w.pts[3]);
+    if (Math.hypot(sx - p1.x, sy - p1.y) < 12) return { type: 'wall', idx: i, handle: 0 };
+    if (Math.hypot(sx - p2.x, sy - p2.y) < 12) return { type: 'wall', idx: i, handle: 1 };
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    if (Math.hypot(sx - mx, sy - my) < 15) return { type: 'wall', idx: i, handle: 'both' };
+  }
+  for (let i = 0; i < curves.length; i++) {
+    const c = curves[i];
+    const p1 = toScreen(c.pts[0], c.pts[1]);
+    const cp = toScreen(c.pts[2], c.pts[3]);
+    const p2 = toScreen(c.pts[4], c.pts[5]);
+    if (Math.hypot(sx - p1.x, sy - p1.y) < 12) return { type: 'curve', idx: i, handle: 0 };
+    if (Math.hypot(sx - cp.x, sy - cp.y) < 12) return { type: 'curve', idx: i, handle: 1 };
+    if (Math.hypot(sx - p2.x, sy - p2.y) < 12) return { type: 'curve', idx: i, handle: 2 };
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    isPanning = true; lastMouse = { x: e.clientX, y: e.clientY };
+    canvas.style.cursor = 'grabbing'; return;
+  }
+  const hit = hitTest(sx, sy);
+  if (hit) {
+    dragging = hit; selectedType = hit.type; selectedIdx = hit.idx;
+    if (hit.type === 'wall' && hit.handle === 'both') {
+      dragging.startPts = [...walls[hit.idx].pts];
+      dragging.startMouse = toImage(sx, sy);
+    }
+    render();
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  if (isPanning) {
+    panX += e.clientX - lastMouse.x; panY += e.clientY - lastMouse.y;
+    lastMouse = { x: e.clientX, y: e.clientY }; render(); return;
+  }
+  if (!dragging) return;
+  const pos = toImage(sx, sy);
+  if (dragging.type === 'wall') {
+    const w = walls[dragging.idx];
+    if (dragging.handle === 'both') {
+      const dx = pos.x - dragging.startMouse.x, dy = pos.y - dragging.startMouse.y;
+      w.pts[0] = dragging.startPts[0] + dx; w.pts[1] = dragging.startPts[1] + dy;
+      w.pts[2] = dragging.startPts[2] + dx; w.pts[3] = dragging.startPts[3] + dy;
+    } else {
+      w.pts[dragging.handle * 2] = pos.x; w.pts[dragging.handle * 2 + 1] = pos.y;
+    }
+  } else if (dragging.type === 'curve') {
+    const c = curves[dragging.idx];
+    c.pts[dragging.handle * 2] = pos.x; c.pts[dragging.handle * 2 + 1] = pos.y;
+  }
+  render();
+});
+
+canvas.addEventListener('mouseup', () => { dragging = null; isPanning = false; canvas.style.cursor = 'crosshair'; });
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const oldZoom = zoom;
+  zoom *= e.deltaY < 0 ? 1.1 : 0.9;
+  zoom = Math.max(0.1, Math.min(5, zoom));
+  panX = mx - (mx - panX) * (zoom / oldZoom);
+  panY = my - (my - panY) * (zoom / oldZoom);
+  render();
+}, { passive: false });
+
+function addWall() {
+  nextId++;
+  walls.push({ pts: [IMG_W * 0.3, IMG_H * 0.5, IMG_W * 0.5, IMG_H * 0.5], label: 'Wall ' + nextId });
+  selectedType = 'wall'; selectedIdx = walls.length - 1; render();
+}
+function addCurve() {
+  nextId++;
+  curves.push({ pts: [IMG_W*0.3, IMG_H*0.4, IMG_W*0.4, IMG_H*0.3, IMG_W*0.5, IMG_H*0.4], n: 10, label: 'Curve ' + nextId });
+  selectedType = 'curve'; selectedIdx = curves.length - 1; render();
+}
+
+function updateOutput() {
+  const lines = [];
+  lines.push('// Layer 1 (always) walls and curves');
+  lines.push('// Paste into TABLE_WALLS and TABLE_CURVES in index.html');
+  lines.push('');
+  lines.push('// === WALLS ===');
+  walls.forEach(w => {
+    const p = w.pts.map(Math.round);
+    lines.push("  { pts: [" + p.join(', ') + "], label: '" + w.label + "', layer: 'always' },");
+  });
+  lines.push('');
+  lines.push('// === CURVES ===');
+  curves.forEach(c => {
+    const p = c.pts.map(Math.round);
+    lines.push("  { pts: [" + p.join(', ') + "], n: " + (c.n || 10) + ", label: '" + c.label + "', layer: 'always' },");
+  });
+  document.getElementById('output').textContent = lines.join('\n');
+}
+
+function copyOutput() {
+  navigator.clipboard.writeText(document.getElementById('output').textContent).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy Code'; }, 1500);
+  });
+}
+
+setTimeout(resize, 100);
+</script>
+</body>
+</html>

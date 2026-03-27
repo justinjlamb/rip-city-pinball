@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pinball Physics Editor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #ccc; height: 100vh; overflow: hidden; display: flex; }
+
+  .sidebar {
+    width: 280px; min-width: 280px; background: #1a1a1a; border-right: 1px solid #333;
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  .sidebar h2 { font-size: 14px; padding: 12px 14px 8px; color: #fff; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #333; }
+  .sidebar h3 { font-size: 10px; padding: 10px 14px 4px; color: #666; letter-spacing: 1px; text-transform: uppercase; }
+
+  .element-list { flex: 1; overflow-y: auto; }
+  .el-item {
+    padding: 6px 14px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid #222;
+  }
+  .el-item:hover { background: #252525; }
+  .el-item.selected { background: #2a2a1a; border-left: 3px solid #f0a030; }
+  .el-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .el-name { flex: 1; }
+  .el-delete { color: #666; cursor: pointer; font-size: 14px; }
+  .el-delete:hover { color: #f44; }
+
+  .controls { padding: 10px 14px; border-top: 1px solid #333; }
+  .controls label { display: block; font-size: 11px; color: #888; margin: 6px 0 2px; }
+  .controls input[type=range] { width: 100%; accent-color: #f0a030; }
+  .controls input[type=text] { width: 100%; background: #222; border: 1px solid #444; color: #fff; padding: 4px 6px; font-size: 12px; border-radius: 3px; }
+  .controls .val { float: right; color: #f0a030; font-family: monospace; font-size: 11px; }
+
+  .add-btns { padding: 8px 14px; display: flex; gap: 4px; flex-wrap: wrap; border-top: 1px solid #333; }
+  .add-btn {
+    padding: 4px 8px; font-size: 10px; border: 1px solid #444; border-radius: 3px;
+    background: #222; color: #aaa; cursor: pointer;
+  }
+  .add-btn:hover { border-color: #f0a030; color: #fff; }
+
+  .preview { flex: 1; position: relative; overflow: hidden; background: #0a0a0a; }
+  canvas { position: absolute; top: 0; left: 0; }
+
+  .prompt-bar {
+    position: fixed; bottom: 0; left: 280px; right: 0; background: #1a1a1a;
+    border-top: 1px solid #333; padding: 8px 16px; display: flex; align-items: center; gap: 12px; z-index: 10;
+  }
+  .prompt-bar pre { flex: 1; font-size: 10px; color: #888; white-space: pre; overflow-x: auto; max-height: 60px; font-family: 'SF Mono', monospace; }
+  .copy-btn {
+    padding: 6px 14px; background: #f0a030; border: none; border-radius: 4px;
+    color: #000; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .copy-btn:hover { background: #ffc050; }
+  .copy-btn.copied { background: #2a2; color: #fff; }
+
+  .hint { position: fixed; top: 8px; right: 8px; font-size: 10px; color: #555; z-index: 5; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <h2>Physics Editor</h2>
+  <h3>Elements</h3>
+  <div class="element-list" id="elementList"></div>
+  <div class="add-btns">
+    <button class="add-btn" onclick="addBumper()">+ Bumper</button>
+    <button class="add-btn" onclick="addWall()">+ Wall</button>
+    <button class="add-btn" onclick="addTarget()">+ Target</button>
+    <button class="add-btn" onclick="addCurve()">+ Curve</button>
+  </div>
+  <div class="controls" id="controls"></div>
+</div>
+
+<div class="preview">
+  <canvas id="C"></canvas>
+</div>
+
+<div class="prompt-bar">
+  <pre id="output">Loading...</pre>
+  <button class="copy-btn" id="copyBtn" onclick="copyOutput()">Copy Code</button>
+</div>
+<div class="hint">Drag elements to position. Scroll to resize bumpers.</div>
+
+<script>
+const IMG_W = 1748, IMG_H = 2432;
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+
+// Load table image
+const img = new Image();
+img.src = 'table.png';
+let imgLoaded = false;
+let scale = 1, offX = 0, offY = 0;
+
+img.onload = () => { imgLoaded = true; resize(); render(); };
+
+// ── ELEMENTS ────────────────────────────────────
+let elements = [
+  // Bumpers (positioned roughly where basketballs are in the image)
+  { type: 'bumper', id: 'b1', label: 'Bumper 1', x: 0.25, y: 0.22, r: 0.025, color: '#f0a030' },
+  { type: 'bumper', id: 'b2', label: 'Bumper 2', x: 0.45, y: 0.25, color: '#f0a030', r: 0.025 },
+  { type: 'bumper', id: 'b3', label: 'Bumper 3', x: 0.65, y: 0.22, color: '#f0a030', r: 0.025 },
+  { type: 'bumper', id: 'b4', label: 'Bumper 4', x: 0.35, y: 0.35, color: '#f0a030', r: 0.025 },
+  { type: 'bumper', id: 'b5', label: 'Bumper 5', x: 0.55, y: 0.38, color: '#f0a030', r: 0.025 },
+
+  // Walls (key table boundaries)
+  { type: 'wall', id: 'w1', label: 'Left Wall', x1: 0.06, y1: 0.08, x2: 0.06, y2: 0.78, color: '#00bcd4' },
+  { type: 'wall', id: 'w2', label: 'Right Wall', x1: 0.82, y1: 0.08, x2: 0.82, y2: 0.78, color: '#00bcd4' },
+  { type: 'wall', id: 'w3', label: 'Top Dome L', x1: 0.06, y1: 0.08, x2: 0.44, y2: 0.03, color: '#00bcd4' },
+  { type: 'wall', id: 'w4', label: 'Top Dome R', x1: 0.44, y1: 0.03, x2: 0.82, y2: 0.08, color: '#00bcd4' },
+  { type: 'wall', id: 'w5', label: 'Left Bowl', x1: 0.06, y1: 0.78, x2: 0.20, y2: 0.85, color: '#00bcd4' },
+  { type: 'wall', id: 'w6', label: 'Right Bowl', x1: 0.82, y1: 0.78, x2: 0.68, y2: 0.85, color: '#00bcd4' },
+  { type: 'wall', id: 'w7', label: 'Launcher Inner', x1: 0.87, y1: 0.12, x2: 0.87, y2: 0.75, color: '#4caf50' },
+  { type: 'wall', id: 'w8', label: 'Launcher Outer', x1: 0.95, y1: 0.08, x2: 0.95, y2: 0.82, color: '#4caf50' },
+  { type: 'wall', id: 'w9', label: 'Left Sling Top', x1: 0.12, y1: 0.68, x2: 0.22, y2: 0.76, color: '#ff5722' },
+  { type: 'wall', id: 'w10', label: 'Left Sling Bot', x1: 0.22, y1: 0.76, x2: 0.12, y2: 0.82, color: '#ff5722' },
+  { type: 'wall', id: 'w11', label: 'Right Sling Top', x1: 0.76, y1: 0.68, x2: 0.66, y2: 0.76, color: '#ff5722' },
+  { type: 'wall', id: 'w12', label: 'Right Sling Bot', x1: 0.66, y1: 0.76, x2: 0.76, y2: 0.82, color: '#ff5722' },
+  { type: 'wall', id: 'w13', label: 'Left Outlane', x1: 0.20, y1: 0.85, x2: 0.20, y2: 0.92, color: '#e91e63' },
+  { type: 'wall', id: 'w14', label: 'Right Outlane', x1: 0.68, y1: 0.85, x2: 0.68, y2: 0.92, color: '#e91e63' },
+
+  // Flippers
+  { type: 'flipper', id: 'f1', label: 'Left Flipper', x: 0.28, y: 0.88, color: '#76ff03' },
+  { type: 'flipper', id: 'f2', label: 'Right Flipper', x: 0.60, y: 0.88, color: '#76ff03' },
+
+  // Targets
+  { type: 'target', id: 't1', label: 'Details Form', x: 0.44, y: 0.45, r: 0.018, color: '#ffeb3b' },
+];
+
+let selectedId = null;
+let dragging = null;
+let dragHandle = null; // 'center', 'p1', 'p2'
+let nextId = 100;
+
+// ── COORDINATE HELPERS ──────────────────────────
+function toScreen(px, py) {
+  return { x: offX + px * IMG_W * scale, y: offY + py * IMG_H * scale };
+}
+function fromScreen(sx, sy) {
+  return { x: (sx - offX) / (IMG_W * scale), y: (sy - offY) / (IMG_H * scale) };
+}
+function toPixel(pct, dim) { return Math.round(pct * dim); }
+
+// ── RESIZE ──────────────────────────────────────
+function resize() {
+  const container = canvas.parentElement;
+  const cw = container.clientWidth, ch = container.clientHeight - 50; // leave room for prompt bar
+  canvas.width = container.clientWidth;
+  canvas.height = container.clientHeight;
+
+  const sx = cw / IMG_W, sy = ch / IMG_H;
+  scale = Math.min(sx, sy) * 0.95;
+  offX = (cw - IMG_W * scale) / 2;
+  offY = (ch - IMG_H * scale) / 2;
+}
+window.addEventListener('resize', () => { resize(); render(); });
+resize();
+
+// ── RENDER ──────────────────────────────────────
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Background image
+  if (imgLoaded) {
+    ctx.drawImage(img, offX, offY, IMG_W * scale, IMG_H * scale);
+    // Slight darken for contrast
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillRect(offX, offY, IMG_W * scale, IMG_H * scale);
+  }
+
+  // Draw elements
+  for (const el of elements) {
+    const isSel = el.id === selectedId;
+    ctx.globalAlpha = isSel ? 0.9 : 0.6;
+
+    if (el.type === 'bumper' || el.type === 'target') {
+      const p = toScreen(el.x, el.y);
+      const r = el.r * IMG_W * scale;
+
+      // Fill
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = el.color;
+      ctx.globalAlpha = isSel ? 0.35 : 0.2;
+      ctx.fill();
+
+      // Stroke
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.globalAlpha = isSel ? 1 : 0.7;
+      ctx.stroke();
+
+      // Center dot
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = el.color;
+      ctx.globalAlpha = 1;
+      ctx.fill();
+
+      // Label
+      ctx.font = '10px system-ui';
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.8;
+      ctx.textAlign = 'center';
+      ctx.fillText(el.label, p.x, p.y - r - 6);
+
+    } else if (el.type === 'wall') {
+      const p1 = toScreen(el.x1, el.y1);
+      const p2 = toScreen(el.x2, el.y2);
+
+      // Line
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.globalAlpha = isSel ? 1 : 0.6;
+      ctx.stroke();
+
+      // Endpoints
+      for (const p of [p1, p2]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, isSel ? 6 : 4, 0, Math.PI * 2);
+        ctx.fillStyle = el.color;
+        ctx.globalAlpha = isSel ? 1 : 0.7;
+        ctx.fill();
+      }
+
+      // Label at midpoint
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      ctx.font = '9px system-ui';
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.6;
+      ctx.textAlign = 'center';
+      ctx.fillText(el.label, mx, my - 8);
+
+    } else if (el.type === 'flipper') {
+      const p = toScreen(el.x, el.y);
+
+      // Cross marker
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = isSel ? 1 : 0.7;
+      ctx.beginPath(); ctx.moveTo(p.x - 10, p.y); ctx.lineTo(p.x + 10, p.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - 10); ctx.lineTo(p.x, p.y + 10); ctx.stroke();
+
+      // Circle
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Label
+      ctx.font = '10px system-ui';
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.8;
+      ctx.textAlign = 'center';
+      ctx.fillText(el.label, p.x, p.y - 16);
+
+    } else if (el.type === 'curve') {
+      const p1 = toScreen(el.x1, el.y1);
+      const cp = toScreen(el.cx, el.cy);
+      const p2 = toScreen(el.x2, el.y2);
+
+      // Draw the smooth curve
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.quadraticCurveTo(cp.x, cp.y, p2.x, p2.y);
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.globalAlpha = isSel ? 1 : 0.6;
+      ctx.stroke();
+
+      // Draw the wall segments that will be generated (preview)
+      const segs = 10;
+      ctx.globalAlpha = isSel ? 0.4 : 0.2;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      for (let s = 0; s < segs; s++) {
+        const t0 = s / segs, t1 = (s + 1) / segs;
+        const a0 = 1 - t0, a1 = 1 - t1;
+        const sx1 = a0*a0*p1.x + 2*a0*t0*cp.x + t0*t0*p2.x;
+        const sy1 = a0*a0*p1.y + 2*a0*t0*cp.y + t0*t0*p2.y;
+        const sx2 = a1*a1*p1.x + 2*a1*t1*cp.x + t1*t1*p2.x;
+        const sy2 = a1*a1*p1.y + 2*a1*t1*cp.y + t1*t1*p2.y;
+        ctx.beginPath();
+        ctx.moveTo(sx1, sy1);
+        ctx.lineTo(sx2, sy2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // Control points
+      // Start (square)
+      ctx.fillStyle = el.color;
+      ctx.globalAlpha = isSel ? 1 : 0.7;
+      ctx.fillRect(p1.x - 5, p1.y - 5, 10, 10);
+      // End (square)
+      ctx.fillRect(p2.x - 5, p2.y - 5, 10, 10);
+      // Control point (diamond)
+      ctx.save();
+      ctx.translate(cp.x, cp.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#ff0';
+      ctx.globalAlpha = isSel ? 1 : 0.6;
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.restore();
+
+      // Lines to control point
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.3;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(cp.x, cp.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cp.x, cp.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Label
+      ctx.font = '9px system-ui';
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.6;
+      ctx.textAlign = 'center';
+      ctx.fillText(el.label, cp.x, cp.y - 12);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  updateElementList();
+  updateOutput();
+}
+
+// ── HIT TESTING ─────────────────────────────────
+function hitTest(sx, sy) {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.type === 'bumper' || el.type === 'target') {
+      const p = toScreen(el.x, el.y);
+      if (Math.hypot(sx - p.x, sy - p.y) < Math.max(20, el.r * IMG_W * scale + 5)) {
+        return { el, handle: 'center' };
+      }
+    } else if (el.type === 'wall') {
+      const p1 = toScreen(el.x1, el.y1);
+      const p2 = toScreen(el.x2, el.y2);
+      if (Math.hypot(sx - p1.x, sy - p1.y) < 12) return { el, handle: 'p1' };
+      if (Math.hypot(sx - p2.x, sy - p2.y) < 12) return { el, handle: 'p2' };
+      // Check line proximity
+      const dx = p2.x - p1.x, dy = p2.y - p1.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0) {
+        const t = Math.max(0, Math.min(1, ((sx-p1.x)*dx + (sy-p1.y)*dy) / (len*len)));
+        const cx = p1.x + t*dx, cy = p1.y + t*dy;
+        if (Math.hypot(sx-cx, sy-cy) < 8) return { el, handle: 'line' };
+      }
+    } else if (el.type === 'flipper') {
+      const p = toScreen(el.x, el.y);
+      if (Math.hypot(sx - p.x, sy - p.y) < 15) return { el, handle: 'center' };
+    } else if (el.type === 'curve') {
+      const p1 = toScreen(el.x1, el.y1);
+      const cp = toScreen(el.cx, el.cy);
+      const p2 = toScreen(el.x2, el.y2);
+      if (Math.hypot(sx - p1.x, sy - p1.y) < 10) return { el, handle: 'p1' };
+      if (Math.hypot(sx - cp.x, sy - cp.y) < 10) return { el, handle: 'cp' };
+      if (Math.hypot(sx - p2.x, sy - p2.y) < 10) return { el, handle: 'p2' };
+    }
+  }
+  return null;
+}
+
+// ── MOUSE INTERACTION ───────────────────────────
+let dragStart = null;
+
+canvas.addEventListener('mousedown', e => {
+  const hit = hitTest(e.offsetX, e.offsetY);
+  if (hit) {
+    dragging = hit.el;
+    dragHandle = hit.handle;
+    selectedId = hit.el.id;
+    dragStart = { x: e.offsetX, y: e.offsetY, el: JSON.parse(JSON.stringify(hit.el)) };
+    render();
+  } else {
+    selectedId = null;
+    render();
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!dragging) {
+    canvas.style.cursor = hitTest(e.offsetX, e.offsetY) ? 'grab' : 'default';
+    return;
+  }
+  canvas.style.cursor = 'grabbing';
+  const pos = fromScreen(e.offsetX, e.offsetY);
+
+  if (dragging.type === 'bumper' || dragging.type === 'target' || dragging.type === 'flipper') {
+    dragging.x = Math.max(0, Math.min(1, pos.x));
+    dragging.y = Math.max(0, Math.min(1, pos.y));
+  } else if (dragging.type === 'curve') {
+    if (dragHandle === 'p1') { dragging.x1 = pos.x; dragging.y1 = pos.y; }
+    else if (dragHandle === 'cp') { dragging.cx = pos.x; dragging.cy = pos.y; }
+    else if (dragHandle === 'p2') { dragging.x2 = pos.x; dragging.y2 = pos.y; }
+  } else if (dragging.type === 'wall') {
+    if (dragHandle === 'p1') {
+      dragging.x1 = Math.max(0, Math.min(1, pos.x));
+      dragging.y1 = Math.max(0, Math.min(1, pos.y));
+    } else if (dragHandle === 'p2') {
+      dragging.x2 = Math.max(0, Math.min(1, pos.x));
+      dragging.y2 = Math.max(0, Math.min(1, pos.y));
+    } else if (dragHandle === 'line') {
+      const dx = (e.offsetX - dragStart.x) / (IMG_W * scale);
+      const dy = (e.offsetY - dragStart.y) / (IMG_H * scale);
+      dragging.x1 = dragStart.el.x1 + dx;
+      dragging.y1 = dragStart.el.y1 + dy;
+      dragging.x2 = dragStart.el.x2 + dx;
+      dragging.y2 = dragStart.el.y2 + dy;
+    }
+  }
+  render();
+});
+
+canvas.addEventListener('mouseup', () => { dragging = null; dragHandle = null; });
+
+// Scroll to resize bumpers
+canvas.addEventListener('wheel', e => {
+  const hit = hitTest(e.offsetX, e.offsetY);
+  if (hit && (hit.el.type === 'bumper' || hit.el.type === 'target')) {
+    e.preventDefault();
+    hit.el.r = Math.max(0.008, Math.min(0.06, hit.el.r + (e.deltaY > 0 ? -0.002 : 0.002)));
+    render();
+  }
+});
+
+// ── ELEMENT LIST ────────────────────────────────
+function updateElementList() {
+  const list = document.getElementById('elementList');
+  const colors = { bumper: '#f0a030', wall: '#00bcd4', flipper: '#76ff03', target: '#ffeb3b' };
+
+  list.textContent = '';
+  for (const el of elements) {
+    const div = document.createElement('div');
+    div.className = 'el-item' + (el.id === selectedId ? ' selected' : '');
+
+    const dot = document.createElement('div');
+    dot.className = 'el-dot';
+    dot.style.background = el.color || colors[el.type];
+
+    const name = document.createElement('span');
+    name.className = 'el-name';
+    name.textContent = el.label;
+
+    const del = document.createElement('span');
+    del.className = 'el-delete';
+    del.textContent = '\u00d7';
+    del.onclick = (ev) => { ev.stopPropagation(); elements = elements.filter(e => e.id !== el.id); if (selectedId === el.id) selectedId = null; render(); };
+
+    div.appendChild(dot);
+    div.appendChild(name);
+    div.appendChild(del);
+    div.onclick = () => { selectedId = el.id; render(); };
+    list.appendChild(div);
+  }
+
+  // Update controls for selected element
+  const ctrl = document.getElementById('controls');
+  ctrl.textContent = '';
+  const sel = elements.find(e => e.id === selectedId);
+  if (!sel) return;
+
+  // Label
+  const lbl = document.createElement('label');
+  lbl.textContent = 'Label';
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = sel.label;
+  inp.oninput = () => { sel.label = inp.value; render(); };
+  ctrl.appendChild(lbl);
+  ctrl.appendChild(inp);
+
+  if (sel.type === 'bumper' || sel.type === 'target') {
+    // Radius slider
+    const rl = document.createElement('label');
+    const rv = document.createElement('span');
+    rv.className = 'val';
+    rv.textContent = Math.round(sel.r * IMG_W) + 'px';
+    rl.textContent = 'Radius ';
+    rl.appendChild(rv);
+    const rs = document.createElement('input');
+    rs.type = 'range'; rs.min = '0.008'; rs.max = '0.06'; rs.step = '0.001'; rs.value = sel.r;
+    rs.oninput = () => { sel.r = parseFloat(rs.value); rv.textContent = Math.round(sel.r * IMG_W) + 'px'; render(); };
+    ctrl.appendChild(rl);
+    ctrl.appendChild(rs);
+
+    // Position display
+    const pl = document.createElement('label');
+    pl.textContent = 'Position: ' + toPixel(sel.x, IMG_W) + ', ' + toPixel(sel.y, IMG_H);
+    pl.style.color = '#666';
+    ctrl.appendChild(pl);
+  }
+
+  if (sel.type === 'wall') {
+    const pl = document.createElement('label');
+    pl.textContent = 'P1: ' + toPixel(sel.x1, IMG_W) + ', ' + toPixel(sel.y1, IMG_H);
+    pl.style.color = '#666';
+    ctrl.appendChild(pl);
+    const p2l = document.createElement('label');
+    p2l.textContent = 'P2: ' + toPixel(sel.x2, IMG_W) + ', ' + toPixel(sel.y2, IMG_H);
+    p2l.style.color = '#666';
+    ctrl.appendChild(p2l);
+  }
+
+  if (sel.type === 'flipper') {
+    const pl = document.createElement('label');
+    pl.textContent = 'Pivot: ' + toPixel(sel.x, IMG_W) + ', ' + toPixel(sel.y, IMG_H);
+    pl.style.color = '#666';
+    ctrl.appendChild(pl);
+  }
+
+  if (sel.type === 'curve') {
+    // Segments slider
+    const sl = document.createElement('label');
+    const sv = document.createElement('span');
+    sv.className = 'val';
+    sv.textContent = (sel.segments || 10);
+    sl.textContent = 'Segments ';
+    sl.appendChild(sv);
+    const ss = document.createElement('input');
+    ss.type = 'range'; ss.min = '4'; ss.max = '20'; ss.step = '1'; ss.value = sel.segments || 10;
+    ss.oninput = () => { sel.segments = parseInt(ss.value); sv.textContent = sel.segments; render(); };
+    ctrl.appendChild(sl);
+    ctrl.appendChild(ss);
+
+    const pl1 = document.createElement('label');
+    pl1.textContent = 'Start: ' + toPixel(sel.x1, IMG_W) + ', ' + toPixel(sel.y1, IMG_H);
+    pl1.style.color = '#666';
+    ctrl.appendChild(pl1);
+    const plc = document.createElement('label');
+    plc.textContent = 'Ctrl: ' + toPixel(sel.cx, IMG_W) + ', ' + toPixel(sel.cy, IMG_H);
+    plc.style.color = '#ff0';
+    ctrl.appendChild(plc);
+    const pl2 = document.createElement('label');
+    pl2.textContent = 'End: ' + toPixel(sel.x2, IMG_W) + ', ' + toPixel(sel.y2, IMG_H);
+    pl2.style.color = '#666';
+    ctrl.appendChild(pl2);
+  }
+}
+
+// ── ADD ELEMENTS ────────────────────────────────
+function addBumper() {
+  nextId++;
+  elements.push({ type: 'bumper', id: 'b' + nextId, label: 'Bumper ' + nextId, x: 0.4, y: 0.3, r: 0.025, color: '#f0a030' });
+  selectedId = 'b' + nextId;
+  render();
+}
+function addWall() {
+  nextId++;
+  elements.push({ type: 'wall', id: 'w' + nextId, label: 'Wall ' + nextId, x1: 0.3, y1: 0.5, x2: 0.5, y2: 0.5, color: '#00bcd4' });
+  selectedId = 'w' + nextId;
+  render();
+}
+function addTarget() {
+  nextId++;
+  elements.push({ type: 'target', id: 't' + nextId, label: 'Target ' + nextId, x: 0.4, y: 0.5, r: 0.018, color: '#ffeb3b' });
+  selectedId = 't' + nextId;
+  render();
+}
+function addCurve() {
+  nextId++;
+  elements.push({ type: 'curve', id: 'c' + nextId, label: 'Curve ' + nextId, x1: 0.2, y1: 0.3, cx: 0.3, cy: 0.15, x2: 0.4, y2: 0.3, color: '#e040fb', segments: 10 });
+  selectedId = 'c' + nextId;
+  render();
+}
+
+// ── OUTPUT ──────────────────────────────────────
+function updateOutput() {
+  const lines = ['// Generated by Physics Editor', '// Image: ' + IMG_W + 'x' + IMG_H, ''];
+
+  const bumpers = elements.filter(e => e.type === 'bumper');
+  if (bumpers.length) {
+    lines.push('const BUMPERS = [');
+    bumpers.forEach(b => {
+      lines.push('  { x: ' + toPixel(b.x, IMG_W) + ', y: ' + toPixel(b.y, IMG_H) + ', r: ' + Math.round(b.r * IMG_W) + ', label: "' + b.label + '" },');
+    });
+    lines.push('];');
+    lines.push('');
+  }
+
+  const targets = elements.filter(e => e.type === 'target');
+  if (targets.length) {
+    lines.push('const TARGETS = [');
+    targets.forEach(t => {
+      lines.push('  { x: ' + toPixel(t.x, IMG_W) + ', y: ' + toPixel(t.y, IMG_H) + ', r: ' + Math.round(t.r * IMG_W) + ', label: "' + t.label + '" },');
+    });
+    lines.push('];');
+    lines.push('');
+  }
+
+  const walls = elements.filter(e => e.type === 'wall');
+  if (walls.length) {
+    lines.push('const WALLS = [');
+    walls.forEach(w => {
+      lines.push('  // ' + w.label);
+      lines.push('  [' + toPixel(w.x1, IMG_W) + ', ' + toPixel(w.y1, IMG_H) + ', ' + toPixel(w.x2, IMG_W) + ', ' + toPixel(w.y2, IMG_H) + '],');
+    });
+    lines.push('];');
+    lines.push('');
+  }
+
+  const curves = elements.filter(e => e.type === 'curve');
+  if (curves.length) {
+    lines.push('// Curves (bezier → wall segments)');
+    lines.push('// curve(startX, startY, ctrlX, ctrlY, endX, endY, segments)');
+    curves.forEach(c => {
+      const s = c.segments || 10;
+      lines.push('// ' + c.label);
+      lines.push('...curve(' + toPixel(c.x1,IMG_W) + ', ' + toPixel(c.y1,IMG_H) + ', ' + toPixel(c.cx,IMG_W) + ', ' + toPixel(c.cy,IMG_H) + ', ' + toPixel(c.x2,IMG_W) + ', ' + toPixel(c.y2,IMG_H) + ', ' + s + '),');
+    });
+    lines.push('');
+  }
+
+  const flippers = elements.filter(e => e.type === 'flipper');
+  if (flippers.length) {
+    lines.push('const FLIPPERS = [');
+    flippers.forEach(f => {
+      lines.push('  { px: ' + toPixel(f.x, IMG_W) + ', py: ' + toPixel(f.y, IMG_H) + ', label: "' + f.label + '" },');
+    });
+    lines.push('];');
+  }
+
+  document.getElementById('output').textContent = lines.join('\n');
+}
+
+function copyOutput() {
+  const text = document.getElementById('output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy Code'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+// ── INIT ────────────────────────────────────────
+render();
+</script>
+</body>
+</html>

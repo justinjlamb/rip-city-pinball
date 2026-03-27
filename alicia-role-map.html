@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alicia — The Gateway | Booking & Events</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Azeret+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #faf8f5;
+    --surface: #fff;
+    --border: rgba(0,0,0,0.08);
+    --text: #1a1a1a;
+    --text-dim: #777;
+    --input: #2563eb;
+    --input-bg: rgba(37,99,235,0.08);
+    --center: #c2410c;
+    --center-bg: rgba(194,65,12,0.08);
+    --system: #7c3aed;
+    --system-bg: rgba(124,58,237,0.06);
+    --output: #059669;
+    --output-bg: rgba(5,150,105,0.08);
+    --dept: #0891b2;
+    --dept-bg: rgba(8,145,178,0.08);
+    --tool: #64748b;
+    --tool-bg: rgba(100,116,139,0.07);
+    --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --mono: 'Azeret Mono', monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111113;
+      --surface: #1c1c1f;
+      --border: rgba(255,255,255,0.07);
+      --text: #e8e6e3;
+      --text-dim: #888;
+      --input-bg: rgba(37,99,235,0.12);
+      --center-bg: rgba(194,65,12,0.15);
+      --system-bg: rgba(124,58,237,0.12);
+      --output-bg: rgba(5,150,105,0.12);
+      --dept-bg: rgba(8,145,178,0.12);
+      --tool-bg: rgba(100,116,139,0.1);
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: var(--font); background: var(--bg); color: var(--text); }
+  canvas { display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  .header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 16px 24px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 16px;
+  }
+  .header h1 {
+    font-size: 18px; font-weight: 800; letter-spacing: -0.5px;
+    color: var(--center);
+  }
+  .header .sub {
+    font-size: 12px; color: var(--text-dim);
+    font-family: var(--mono); letter-spacing: 0.5px; text-transform: uppercase;
+  }
+
+  .legend {
+    position: fixed; bottom: 16px; left: 16px; z-index: 10;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px;
+    font-size: 11px; display: flex; flex-direction: column; gap: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .insight {
+    position: fixed; bottom: 16px; right: 16px; z-index: 10;
+    background: var(--center-bg); border: 1px solid rgba(194,65,12,0.15);
+    border-radius: 8px; padding: 14px 18px; max-width: 300px;
+    font-size: 12px; line-height: 1.5; color: var(--text);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .insight strong { color: var(--center); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Alicia — The Gateway</h1>
+  <span class="sub">Booking & Events / Rip City Management</span>
+</div>
+
+<canvas id="C"></canvas>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--input)"></div>Inputs</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--center)"></div>Alicia</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--tool)"></div>Tools (incl. Momentus)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--output)"></div>Outputs</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--dept)"></div>Departments</div>
+</div>
+
+<div class="insight">
+  <strong>Without Alicia, departments don't know what's coming.</strong><br><br>
+  She is the bridge between external event bookings and internal operations. Everything flows through her.
+</div>
+
+<script>
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── NODE DATA ──────────────────────────────────────
+const TYPES = {
+  center:  { color: '#c2410c', bg: 'rgba(194,65,12,0.10)', r: 52 },
+  input:   { color: '#2563eb', bg: 'rgba(37,99,235,0.08)',  r: 26 },
+  output:  { color: '#059669', bg: 'rgba(5,150,105,0.08)',  r: 26 },
+  dept:    { color: '#0891b2', bg: 'rgba(8,145,178,0.08)',  r: 22 },
+  tool:    { color: '#64748b', bg: 'rgba(100,116,139,0.07)', r: 20 },
+};
+
+const nodes = [
+  // Center hub
+  { id: 'alicia', label: 'ALICIA', sub: 'The Gateway', type: 'center', x: W*0.42, y: H*0.48 },
+
+  // Tools — orbiting close around Alicia
+  { id: 'momentus', label: 'Momentus', type: 'tool', x: W*0.42, y: H*0.34 },
+  { id: 'excel', label: 'Excel', type: 'tool', x: W*0.34, y: H*0.40 },
+  { id: 'outlook', label: 'Outlook', type: 'tool', x: W*0.50, y: H*0.40 },
+  { id: 'slack', label: 'Slack', type: 'tool', x: W*0.50, y: H*0.56 },
+  { id: 'word', label: 'Word', type: 'tool', x: W*0.34, y: H*0.56 },
+  { id: 'pollstar', label: 'Pollstar', type: 'tool', x: W*0.42, y: H*0.62 },
+
+  // Inputs (left side — evenly spaced)
+  { id: 'booking', label: 'Booking\nRequests', type: 'input', x: W*0.08, y: H*0.18 },
+  { id: 'shows', label: 'New Show\nAnnouncements', type: 'input', x: W*0.06, y: H*0.32 },
+  { id: 'docs', label: "Other People's\nDocuments", type: 'input', x: W*0.08, y: H*0.46 },
+  { id: 'addon', label: 'Add-on\nEvents', type: 'input', x: W*0.06, y: H*0.60 },
+  { id: 'details', label: 'Details\nForms', type: 'input', x: W*0.08, y: H*0.74 },
+  { id: 'research', label: 'Research', type: 'input', x: W*0.06, y: H*0.86 },
+
+  // Outputs (right of center)
+  { id: 'calendar', label: 'Arena\nCalendar', sub: '1st & 15th', type: 'output', x: W*0.66, y: H*0.20 },
+  { id: 'alerts', label: 'Event\nAlerts', sub: 'Yellow / Green', type: 'output', x: W*0.68, y: H*0.40 },
+  { id: 'announce', label: 'Internal\nAnnouncements', type: 'output', x: W*0.66, y: H*0.58 },
+  { id: 'deptnotify', label: 'Dept\nNotifications', type: 'output', x: W*0.68, y: H*0.76 },
+
+  // Departments (far right — spread out)
+  { id: 'guest', label: 'Guest\nExperience', type: 'dept', x: W*0.88, y: H*0.12 },
+  { id: 'security', label: 'Security', type: 'dept', x: W*0.92, y: H*0.23 },
+  { id: 'ess', label: 'ESS /\nConversions', type: 'dept', x: W*0.88, y: H*0.34 },
+  { id: 'catering', label: 'Catering\n(Levy)', type: 'dept', x: W*0.92, y: H*0.45 },
+  { id: 'prod', label: 'Production', type: 'dept', x: W*0.88, y: H*0.56 },
+  { id: 'boxoffice', label: 'Box\nOffice', type: 'dept', x: W*0.92, y: H*0.67 },
+  { id: 'enviro', label: 'Environmental\nServices', type: 'dept', x: W*0.88, y: H*0.78 },
+  { id: 'facility', label: 'Facility Ops\nEngineers', type: 'dept', x: W*0.92, y: H*0.88 },
+];
+
+const edges = [
+  // Inputs → Alicia
+  ['booking', 'alicia'], ['shows', 'alicia'], ['docs', 'alicia'],
+  ['addon', 'alicia'], ['details', 'alicia'], ['research', 'alicia'],
+
+  // Alicia ↔ Tools (tight orbit)
+  ['alicia', 'momentus'], ['alicia', 'excel'], ['alicia', 'outlook'],
+  ['alicia', 'slack'], ['alicia', 'word'], ['alicia', 'pollstar'],
+
+  // Alicia → Outputs
+  ['alicia', 'calendar'], ['alicia', 'alerts'],
+  ['alicia', 'announce'], ['alicia', 'deptnotify'],
+
+  // Outputs → ALL Departments (she touches everyone)
+  ['calendar', 'guest'], ['calendar', 'security'], ['calendar', 'ess'],
+  ['calendar', 'catering'], ['calendar', 'prod'], ['calendar', 'boxoffice'],
+  ['calendar', 'enviro'], ['calendar', 'facility'],
+  ['alerts', 'guest'], ['alerts', 'security'], ['alerts', 'prod'],
+  ['alerts', 'boxoffice'], ['alerts', 'enviro'],
+  ['announce', 'catering'], ['announce', 'ess'], ['announce', 'facility'],
+  ['deptnotify', 'guest'], ['deptnotify', 'security'], ['deptnotify', 'prod'],
+];
+
+// ── PHYSICS ────────────────────────────────────────
+const nodeMap = {};
+nodes.forEach(n => {
+  n.vx = 0; n.vy = 0;
+  nodeMap[n.id] = n;
+});
+
+function simulate() {
+  const center = nodeMap['alicia'];
+
+  // Node-node repulsion
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i+1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const minDist = (TYPES[a.type].r + TYPES[b.type].r) * 3.5;
+      if (d < minDist) {
+        const force = (minDist - d) * 0.03;
+        const fx = (dx/d) * force, fy = (dy/d) * force;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+    }
+  }
+
+  // Edge attraction (gentle spring)
+  for (const [aId, bId] of edges) {
+    const a = nodeMap[aId], b = nodeMap[bId];
+    if (!a || !b) continue;
+    let dx = b.x - a.x, dy = b.y - a.y;
+    let d = Math.sqrt(dx*dx + dy*dy) || 1;
+    const target = (TYPES[a.type].r + TYPES[b.type].r) * 6;
+    const force = (d - target) * 0.001;
+    a.vx += (dx/d) * force;
+    a.vy += (dy/d) * force;
+    b.vx -= (dx/d) * force;
+    b.vy -= (dy/d) * force;
+  }
+
+  // Gravity toward center of screen (weak)
+  nodes.forEach(n => {
+    n.vx += (W*0.5 - n.x) * 0.0001;
+    n.vy += (H*0.5 - n.y) * 0.0001;
+  });
+
+  // Apply velocity with damping
+  nodes.forEach(n => {
+    if (n === dragging) return;
+    n.x += n.vx;
+    n.y += n.vy;
+    n.vx *= 0.92;
+    n.vy *= 0.92;
+    // Keep on screen
+    const r = TYPES[n.type].r;
+    n.x = Math.max(r + 10, Math.min(W - r - 10, n.x));
+    n.y = Math.max(r + 60, Math.min(H - r - 10, n.y));
+  });
+}
+
+// ── RENDERING ──────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background gradient
+  const bgGrad = ctx.createRadialGradient(W*0.45, H*0.48, 0, W*0.45, H*0.48, W*0.6);
+  bgGrad.addColorStop(0, 'rgba(194,65,12,0.03)');
+  bgGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Edges
+  for (const [aId, bId] of edges) {
+    const a = nodeMap[aId], b = nodeMap[bId];
+    if (!a || !b) continue;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = TYPES[a.type].color;
+    ctx.globalAlpha = 0.08;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Flow direction arrows on key edges
+  for (const [aId, bId] of edges) {
+    const a = nodeMap[aId], b = nodeMap[bId];
+    if (!a || !b) continue;
+    // Only draw arrows for input→alicia and alicia→output edges
+    if ((a.type === 'input' && b.id === 'alicia') ||
+        (a.id === 'alicia' && b.type === 'output') ||
+        (a.type === 'output' && b.type === 'dept')) {
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.save();
+      ctx.translate(mx, my);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(6, 0);
+      ctx.lineTo(-3, -3);
+      ctx.lineTo(-3, 3);
+      ctx.closePath();
+      ctx.fillStyle = TYPES[a.type].color;
+      ctx.globalAlpha = 0.25;
+      ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Nodes
+  for (const n of nodes) {
+    const t = TYPES[n.type];
+    const r = t.r;
+    const isHovered = n === hovered;
+    const scale = isHovered ? 1.08 : 1;
+
+    // Glow
+    if (n.type === 'center') {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r * 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(194,65,12,0.04)';
+      ctx.fill();
+    }
+
+    // Shadow
+    ctx.beginPath();
+    ctx.arc(n.x + 2, n.y + 2, r * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fill();
+
+    // Body
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r * scale, 0, Math.PI * 2);
+    ctx.fillStyle = t.bg;
+    ctx.fill();
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = isHovered ? 2.5 : 1.5;
+    ctx.globalAlpha = isHovered ? 1 : 0.6;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Label
+    ctx.font = `${n.type === 'center' ? '700' : '600'} ${r * 0.38}px 'Plus Jakarta Sans', sans-serif`;
+    ctx.fillStyle = t.color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lines = n.label.split('\n');
+    const lineH = r * 0.42;
+    const startY = n.y - (lines.length - 1) * lineH / 2;
+    lines.forEach((line, i) => {
+      ctx.fillText(line, n.x, startY + i * lineH);
+    });
+
+    // Sub label
+    if (n.sub) {
+      ctx.font = `400 ${r * 0.26}px 'Azeret Mono', monospace`;
+      ctx.fillStyle = t.color;
+      ctx.globalAlpha = 0.5;
+      const subLines = n.sub.split('\n');
+      subLines.forEach((sl, i) => {
+        ctx.fillText(sl, n.x, n.y + r * 0.65 + i * r * 0.3);
+      });
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Section labels
+  ctx.font = "500 11px 'Azeret Mono', monospace";
+  ctx.textAlign = 'left';
+  ctx.fillStyle = TYPES.input.color;
+  ctx.globalAlpha = 0.3;
+  ctx.fillText('INPUTS', 20, 78);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = TYPES.dept.color;
+  ctx.fillText('DEPARTMENTS', W - 20, 78);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = TYPES.tool.color;
+  ctx.fillText('TOOLS', W * 0.47, H - 12);
+  ctx.globalAlpha = 1;
+}
+
+// ── INTERACTION ────────────────────────────────────
+let dragging = null;
+let hovered = null;
+let dragOff = { x: 0, y: 0 };
+
+function getNodeAt(mx, my) {
+  // Check in reverse so top-drawn nodes are hit first
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    const r = TYPES[n.type].r;
+    if (Math.hypot(mx - n.x, my - n.y) < r + 5) return n;
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const n = getNodeAt(e.clientX, e.clientY);
+  if (n) {
+    dragging = n;
+    dragOff.x = e.clientX - n.x;
+    dragOff.y = e.clientY - n.y;
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (dragging) {
+    dragging.x = e.clientX - dragOff.x;
+    dragging.y = e.clientY - dragOff.y;
+    dragging.vx = 0;
+    dragging.vy = 0;
+  }
+  hovered = getNodeAt(e.clientX, e.clientY);
+  canvas.style.cursor = hovered ? 'grab' : 'default';
+});
+canvas.addEventListener('mouseup', () => { dragging = null; });
+canvas.addEventListener('mouseleave', () => { dragging = null; hovered = null; });
+
+// Touch
+canvas.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  const n = getNodeAt(t.clientX, t.clientY);
+  if (n) {
+    dragging = n;
+    dragOff.x = t.clientX - n.x;
+    dragOff.y = t.clientY - n.y;
+    e.preventDefault();
+  }
+});
+canvas.addEventListener('touchmove', e => {
+  if (dragging) {
+    const t = e.touches[0];
+    dragging.x = t.clientX - dragOff.x;
+    dragging.y = t.clientY - dragOff.y;
+    dragging.vx = 0;
+    dragging.vy = 0;
+    e.preventDefault();
+  }
+});
+canvas.addEventListener('touchend', () => { dragging = null; });
+
+// ── LOOP ───────────────────────────────────────────
+function loop() {
+  simulate();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

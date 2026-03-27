@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booking & Events — Alicia Lamb</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    background: #08080c;
+    color: #e8e6e3;
+  }
+  canvas {
+    display: block;
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+
+  .title-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 24px 40px;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1s ease;
+  }
+  .title-bar.visible { opacity: 1; }
+  .title-left h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: #9b9bab;
+  }
+  .title-left .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #5b5b6b;
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
+  .title-right .venue {
+    font-size: 12px;
+    font-weight: 500;
+    color: #5b5b6b;
+    letter-spacing: 1px;
+  }
+
+  .stats-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 64px;
+    padding: 22px 40px;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1s ease;
+    background: linear-gradient(to top, rgba(8,8,12,0.95) 0%, rgba(8,8,12,0.6) 60%, transparent 100%);
+  }
+  .stats-bar.visible { opacity: 1; }
+  .stat { text-align: center; }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 26px;
+    font-weight: 500;
+    color: #e8e6e3;
+  }
+  .stat-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: #5b5b6b;
+    margin-top: 4px;
+  }
+
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    z-index: 20;
+    background: rgba(16, 16, 24, 0.95);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 12px 16px;
+    backdrop-filter: blur(16px);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    max-width: 260px;
+  }
+  .tooltip.visible { opacity: 1; }
+  .tooltip-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .tooltip-desc { font-size: 12px; color: #7b7b8b; line-height: 1.5; }
+
+  .intro-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #08080c;
+    transition: opacity 1.4s ease;
+  }
+  .intro-overlay.fade-out { opacity: 0; pointer-events: none; }
+  .intro-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 7px;
+    text-transform: uppercase;
+    color: #8b8b9b;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: introIn 1.2s 0.4s ease forwards;
+  }
+  .intro-line {
+    width: 48px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #5b5b6b, transparent);
+    margin: 20px 0;
+    opacity: 0;
+    animation: introIn 0.8s 1s ease forwards;
+  }
+  .intro-name {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: #4b4b5b;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: introIn 1.2s 1.5s ease forwards;
+  }
+  @keyframes introIn { to { opacity: 1; transform: translateY(0); } }
+
+  .pause-indicator {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #5b5b6b;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: 15;
+    background: rgba(8,8,12,0.8);
+    padding: 8px 20px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .pause-indicator.visible { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="intro-overlay" id="intro">
+  <div class="intro-title">Booking & Events</div>
+  <div class="intro-line"></div>
+  <div class="intro-name">Rip City Management</div>
+</div>
+
+<canvas id="C"></canvas>
+
+<div class="title-bar" id="titleBar">
+  <div class="title-left">
+    <h1>Booking & Events</h1>
+    <div class="subtitle">Rip City Management</div>
+  </div>
+  <div class="title-right">
+    <div class="venue">Moda Center &middot; VMC &middot; Weight Room</div>
+  </div>
+</div>
+
+<div class="stats-bar" id="statsBar">
+  <div class="stat">
+    <div class="stat-value" id="eventCounter">0</div>
+    <div class="stat-label">Events This Season</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">3</div>
+    <div class="stat-label">Venues</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">8</div>
+    <div class="stat-label">Departments</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">1st & 15th</div>
+    <div class="stat-label">Calendar Published</div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip">
+  <div class="tooltip-title" id="tooltipTitle"></div>
+  <div class="tooltip-desc" id="tooltipDesc"></div>
+</div>
+
+<div class="pause-indicator" id="pauseIndicator">Click to resume</div>
+
+<script>
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+let W, H, dpr, cx, cy;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx = W / 2;
+  cy = H / 2;
+  layoutNodes();
+}
+window.addEventListener('resize', resize);
+
+// ── DATA ──────────────────────────────────────────────
+
+const eventTypes = [
+  { id: 'concerts',     label: 'Concerts',          color: '#f59e0b', tag: 'PROCESSED', desc: 'Processed through B&E once confirmed by talent booking' },
+  { id: 'blazers',      label: 'Blazer Games',      color: '#ef4444', tag: 'PROCESSED', desc: '41 home games — full department coordination' },
+  { id: 'winterhawks',  label: 'Winterhawks',       color: '#60a5fa', tag: 'PROCESSED', desc: '36 home games at VMC' },
+  { id: 'conferences',  label: 'Conferences',       color: '#a78bfa', tag: 'PROCESSED', desc: 'Multi-day events requiring complex scheduling' },
+  { id: 'internal',     label: 'Internal Meetings',  color: '#22d3ee', tag: 'BOOKED', desc: 'Booked and managed directly by B&E' },
+  { id: 'camps',        label: 'Camps',             color: '#34d399', tag: 'BOOKED', desc: 'Youth and training camps — booked by B&E' },
+  { id: 'tours',        label: 'Tours',             color: '#fb923c', tag: 'BOOKED', desc: 'Facility tours — scheduled and managed by B&E' },
+  { id: 'private',      label: 'Private Events',    color: '#f472b6', tag: 'BOOKED', desc: 'Private meetings and gatherings — booked by B&E' },
+  { id: 'nonticketed',  label: 'Non-Ticketed',      color: '#c4b5fd', tag: 'PROCESSED', desc: 'Graduations, festivals, charity walks, community events' },
+];
+
+const departments = [
+  { id: 'guest',      label: 'Guest Experience',      color: '#38bdf8' , desc: 'Front-of-house staffing and guest services' },
+  { id: 'security',   label: 'Security',              color: '#94a3b8',  desc: 'Event security planning and coordination' },
+  { id: 'ess',        label: 'ESS / Conversions',     color: '#2dd4bf',  desc: 'Event setup and venue conversions' },
+  { id: 'catering',   label: 'Catering (Levy)',       color: '#fbbf24',  desc: 'Food & beverage — Levy Restaurants' },
+  { id: 'production', label: 'Production',            color: '#c4b5fd',  desc: 'Audio, visual, lighting, stage' },
+  { id: 'boxoffice',  label: 'Box Office',            color: '#fb923c',  desc: 'Ticketing operations and will-call' },
+  { id: 'enviro',     label: 'Environmental Svcs',    color: '#4ade80',  desc: 'Cleaning and environmental management' },
+  { id: 'facility',   label: 'Facility Ops',          color: '#cbd5e1',  desc: 'Building systems, HVAC, dock' },
+];
+
+const outputs = [
+  { id: 'calendar',    label: 'Arena Calendar',   color: '#38bdf8',  desc: 'Published 1st & 15th via Slack' },
+  { id: 'alerts',      label: 'Event Alerts',     color: '#fbbf24',  desc: 'Sent for every event on campus' },
+  { id: 'settlements', label: 'Settlements',      color: '#4ade80',  desc: 'Post-event financial reconciliation' },
+];
+
+const lifecycleSteps = [
+  'Booking Request', 'Documentation', 'Momentus', 'Calendar',
+  'Event Alerts', 'Dept Prep', 'EVENT DAY', 'Settlement', 'Finance', 'Back to B&E'
+];
+
+// ── NODES ──────────────────────────────────────────────
+
+const nodes = [];
+let centerNode = null;
+
+function layoutNodes() {
+  nodes.length = 0;
+
+  // Spread for booth readability, right column pulled in to avoid label clipping
+  const leftX = W * 0.14;
+  const rightX = W * 0.82;
+  const outputX = W * 0.72;
+
+  // Events — left, generous spacing
+  const evCount = eventTypes.length;
+  const evTotalHeight = H * 0.72;
+  const evSpacing = evTotalHeight / (evCount - 1);
+  const evStartY = cy - evTotalHeight / 2;
+
+  eventTypes.forEach((ev, i) => {
+    nodes.push({
+      ...ev, type: 'event',
+      x: leftX, y: evStartY + i * evSpacing,
+      radius: 7, visible: false, opacity: 0,
+      entryDelay: i * 280 + 2200,
+    });
+  });
+
+  // Center
+  centerNode = {
+    id: 'center', label: 'Alicia', type: 'center',
+    x: cx, y: cy, radius: 46,
+    color: '#f97316', visible: false, opacity: 0,
+    entryDelay: 1500, pulsePhase: 0,
+    desc: 'Processes every event — confirmation to settlement'
+  };
+  nodes.push(centerNode);
+
+  // Departments — right
+  const deptCount = departments.length;
+  const deptTotalHeight = H * 0.56;
+  const deptSpacing = deptTotalHeight / (deptCount - 1);
+  const deptStartY = cy - deptTotalHeight / 2 - H * 0.06;
+
+  departments.forEach((d, i) => {
+    nodes.push({
+      ...d, type: 'dept',
+      x: rightX, y: deptStartY + i * deptSpacing,
+      radius: 6, visible: false, opacity: 0,
+      entryDelay: i * 180 + 4200,
+    });
+  });
+
+  // Outputs — below departments on right
+  const outStartY = deptStartY + deptCount * deptSpacing + 40;
+
+  outputs.forEach((o, i) => {
+    nodes.push({
+      ...o, type: 'output',
+      x: outputX, y: outStartY + i * 32,
+      radius: 5, visible: false, opacity: 0,
+      entryDelay: i * 220 + 6000,
+    });
+  });
+}
+
+// ── FLOWING PARTICLES ──────────────────────────────────
+
+class FlowParticle {
+  constructor(from, to, color) {
+    this.from = from;
+    this.to = to;
+    this.color = color;
+    this.t = 0;
+    this.speed = 0.005 + Math.random() * 0.005;
+    this.size = 2.5 + Math.random() * 2;
+    this.alive = true;
+    this.x = from.x;
+    this.y = from.y;
+  }
+
+  update() {
+    this.t += this.speed;
+    if (this.t >= 1) { this.alive = false; return; }
+
+    const t = this.t;
+    const fx = this.from.x, fy = this.from.y;
+    const tx = this.to.x, ty = this.to.y;
+
+    // Match the S-curve bezier used for connections
+    const cp1x = fx + (tx - fx) * 0.35;
+    const cp1y = fy;
+    const cp2x = tx - (tx - fx) * 0.35;
+    const cp2y = ty;
+    const it = 1 - t;
+    this.x = it*it*it*fx + 3*it*it*t*cp1x + 3*it*t*t*cp2x + t*t*t*tx;
+    this.y = it*it*it*fy + 3*it*it*t*cp1y + 3*it*t*t*cp2y + t*t*t*ty;
+  }
+
+  draw(ctx) {
+    if (!this.alive) return;
+    const alpha = Math.sin(this.t * Math.PI) * 0.9;
+
+    // Glow — larger for booth visibility
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * 6, 0, Math.PI * 2);
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * 6);
+    g.addColorStop(0, hexRgba(this.color, alpha * 0.3));
+    g.addColorStop(0.4, hexRgba(this.color, alpha * 0.1));
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // Core
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fillStyle = hexRgba(this.color, alpha);
+    ctx.fill();
+  }
+}
+
+const particles = [];
+let spawnTick = 0;
+
+function spawnFlowParticles() {
+  const ve = nodes.filter(n => n.type === 'event' && n.visible && n.opacity > 0.5);
+  const vd = nodes.filter(n => n.type === 'dept' && n.visible && n.opacity > 0.5);
+  const vo = nodes.filter(n => n.type === 'output' && n.visible && n.opacity > 0.5);
+
+  if (!centerNode.visible || centerNode.opacity < 0.3) return;
+
+  // Event → Center
+  if (ve.length > 0) {
+    const e = ve[Math.floor(Math.random() * ve.length)];
+    particles.push(new FlowParticle(e, centerNode, e.color));
+  }
+
+  // Center → Department
+  if (vd.length > 0) {
+    const d = vd[Math.floor(Math.random() * vd.length)];
+    particles.push(new FlowParticle(centerNode, d, d.color));
+  }
+
+  // Center → Output (less frequent)
+  if (vo.length > 0 && Math.random() < 0.4) {
+    const o = vo[Math.floor(Math.random() * vo.length)];
+    particles.push(new FlowParticle(centerNode, o, o.color));
+  }
+}
+
+// ── DRAWING HELPERS ────────────────────────────────────
+
+function hexRgba(hex, a) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function drawCurve(from, to, alpha, color, width) {
+  if (!from.visible || !to.visible) return;
+  const fx = from.x, fy = from.y;
+  const tx = to.x, ty = to.y;
+  const cp1x = fx + (tx - fx) * 0.35;
+  const cp1y = fy;
+  const cp2x = tx - (tx - fx) * 0.35;
+  const cp2y = ty;
+
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+  ctx.strokeStyle = hexRgba(color, alpha);
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function drawAnimatedCurve(from, to, alpha, color, time) {
+  if (!from.visible || !to.visible) return;
+  const fx = from.x, fy = from.y;
+  const tx = to.x, ty = to.y;
+
+  // Horizontal-first S-curve: go horizontal from source, then vertical, then horizontal to target
+  const cp1x = fx + (tx - fx) * 0.35;
+  const cp1y = fy;
+  const cp2x = tx - (tx - fx) * 0.35;
+  const cp2y = ty;
+
+  // Base line — subtle
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+  ctx.strokeStyle = hexRgba(color, alpha * 0.06);
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+
+  // Animated flowing dashes — direction shows flow
+  ctx.save();
+  ctx.setLineDash([3, 14]);
+  ctx.lineDashOffset = -time * 0.04;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+  ctx.strokeStyle = hexRgba(color, alpha * 0.12);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── CENTER HUB ──────────────────────────────────────────
+
+function drawCenter(time) {
+  if (!centerNode.visible) return;
+  const x = centerNode.x, y = centerNode.y;
+  const a = centerNode.opacity;
+  const pulse = 1 + Math.sin(time * 0.0015) * 0.06;
+  const r = centerNode.radius * pulse;
+
+  // Large ambient glow
+  for (let i = 4; i >= 0; i--) {
+    const gr = r + i * 24;
+    const grd = ctx.createRadialGradient(x, y, r * 0.5, x, y, gr);
+    grd.addColorStop(0, `rgba(249, 115, 22, ${0.04 * a})`);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(x, y, gr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Periodic pulse waves radiating outward (two staggered)
+  if (a > 0.8) {
+    for (let w = 0; w < 2; w++) {
+      const offset = w * 2000;
+      const pw = ((time + offset) % 4000) / 4000;
+      const waveR = r + pw * 140;
+      const waveAlpha = (1 - pw) * 0.1 * a;
+      ctx.beginPath();
+      ctx.arc(x, y, waveR, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(249, 115, 22, ${waveAlpha})`;
+      ctx.lineWidth = 1.5 * (1 - pw);
+      ctx.stroke();
+    }
+  }
+
+  // Rotating ring
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(time * 0.0003);
+  ctx.beginPath();
+  ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(249, 115, 22, ${0.12 * a})`;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Main filled circle
+  const grad = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, 0, x, y, r);
+  grad.addColorStop(0, `rgba(251, 146, 60, ${0.95 * a})`);
+  grad.addColorStop(0.6, `rgba(249, 115, 22, ${0.85 * a})`);
+  grad.addColorStop(1, `rgba(234, 88, 12, ${0.75 * a})`);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Inner highlight ring
+  ctx.beginPath();
+  ctx.arc(x, y, r - 4, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 * a})`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Name — large and bold for booth
+  ctx.font = '800 22px "Plus Jakarta Sans"';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * a})`;
+  ctx.fillText('ALICIA', x, y - 1);
+
+  // Role subtitle
+  ctx.font = '500 9px "JetBrains Mono"';
+  ctx.fillStyle = `rgba(255, 200, 150, ${0.6 * a})`;
+  ctx.fillText('BOOKING & EVENTS', x, y + r + 18);
+
+  // Tagline — the "get it in 3 seconds" sentence
+  ctx.font = '300 13px "Plus Jakarta Sans"';
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.3 * a})`;
+  ctx.fillText('Every event. Every department. One point of coordination.', x, y + r + 40);
+}
+
+// ── REGULAR NODES ──────────────────────────────────────
+
+function drawRegularNode(node, time) {
+  if (!node.visible || node.opacity < 0.01) return;
+
+  const x = node.x, y = node.y;
+  let a = node.opacity;
+
+  // Dimming logic for hover
+  const isHovered = hoveredNode === node;
+  const isHighlighted = hoveredNode && (
+    hoveredNode === node ||
+    hoveredNode.type === 'center' ||
+    (hoveredNode.type === 'event' && (node.type === 'dept' || node.type === 'output' || node.type === 'center')) ||
+    (hoveredNode.type === 'dept' && (node.type === 'event' || node.type === 'center')) ||
+    (hoveredNode.type === 'output' && (node.type === 'event' || node.type === 'center'))
+  );
+  const isDimmed = hoveredNode && !isHighlighted;
+  if (isDimmed) a *= 0.15;
+
+  const r = node.radius;
+
+  // Hovered glow
+  if (isHovered) {
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, r * 5);
+    grd.addColorStop(0, hexRgba(node.color, 0.2));
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Dot
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = hexRgba(node.color, 0.85 * a);
+  ctx.fill();
+
+  // Soft glow around dot
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
+  const dg = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 2.5);
+  dg.addColorStop(0, hexRgba(node.color, 0.08 * a));
+  dg.addColorStop(1, 'transparent');
+  ctx.fillStyle = dg;
+  ctx.fill();
+
+  // Label — bigger for booth
+  const isLeft = node.type === 'event';
+  const fontSize = isHovered ? 15 : 14;
+  const weight = isHovered ? '700' : '600';
+  ctx.font = `${weight} ${fontSize}px "Plus Jakarta Sans"`;
+  ctx.textAlign = isLeft ? 'right' : 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = hexRgba(node.color, a * (isHighlighted ? 1 : 0.75));
+  const off = isLeft ? -16 : 16;
+  ctx.fillText(node.label, x + off, y);
+
+  // Output tag
+  if (node.type === 'output' && !isDimmed) {
+    ctx.font = '500 8px "JetBrains Mono"';
+    ctx.fillStyle = hexRgba(node.color, a * 0.35);
+    ctx.textAlign = 'left';
+    ctx.fillText('OUTPUT', x + 16, y + 16);
+  }
+
+  // Event type tag (PROCESSED / BOOKED)
+  if (node.type === 'event' && node.tag && !isDimmed) {
+    ctx.font = '500 8px "JetBrains Mono"';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = hexRgba(node.color, a * 0.3);
+    ctx.fillText(node.tag, x - 16, y + 15);
+  }
+}
+
+// ── LIFECYCLE RING ──────────────────────────────────────
+
+function drawLifecycleRing(time) {
+  const ringR = Math.min(W, H) * 0.40;
+  const steps = lifecycleSteps.length;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // Dotted ring
+  ctx.beginPath();
+  ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 10]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (let i = 0; i < steps; i++) {
+    const angle = (i / steps) * Math.PI * 2 - Math.PI / 2 + time * 0.00003;
+    const sx = Math.cos(angle) * ringR;
+    const sy = Math.sin(angle) * ringR;
+
+    // Step dot
+    const isEventDay = i === 6;
+    ctx.beginPath();
+    ctx.arc(sx, sy, isEventDay ? 3 : 2, 0, Math.PI * 2);
+    ctx.fillStyle = isEventDay ? 'rgba(249, 115, 22, 0.6)' : 'rgba(255,255,255,0.12)';
+    ctx.fill();
+
+    // Step label
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Position label outside the ring
+    const labelR = 16;
+    const lx = Math.cos(angle) * labelR;
+    const ly = Math.sin(angle) * labelR;
+
+    ctx.font = '500 8px "JetBrains Mono"';
+    ctx.fillStyle = isEventDay ? 'rgba(249, 115, 22, 0.45)' : 'rgba(255,255,255,0.12)';
+
+    // Determine text alignment based on position around ring
+    if (Math.abs(Math.cos(angle)) < 0.3) {
+      ctx.textAlign = 'center';
+    } else if (Math.cos(angle) > 0) {
+      ctx.textAlign = 'left';
+    } else {
+      ctx.textAlign = 'right';
+    }
+    ctx.textBaseline = 'middle';
+    ctx.fillText(lifecycleSteps[i].toUpperCase(), lx, ly);
+    ctx.restore();
+  }
+
+  // Animated orbiting dot
+  const orbAngle = (time * 0.00008) % (Math.PI * 2) - Math.PI / 2;
+  const ox = Math.cos(orbAngle) * ringR;
+  const oy = Math.sin(orbAngle) * ringR;
+
+  ctx.beginPath();
+  ctx.arc(ox, oy, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(249, 115, 22, 0.7)';
+  ctx.fill();
+
+  const og = ctx.createRadialGradient(ox, oy, 0, ox, oy, 16);
+  og.addColorStop(0, 'rgba(249, 115, 22, 0.2)');
+  og.addColorStop(1, 'transparent');
+  ctx.fillStyle = og;
+  ctx.beginPath();
+  ctx.arc(ox, oy, 16, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ── BACKGROUND ──────────────────────────────────────────
+
+function drawBg() {
+  ctx.fillStyle = '#08080c';
+  ctx.fillRect(0, 0, W, H);
+
+  // Center warmth
+  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.45);
+  bg.addColorStop(0, 'rgba(249, 115, 22, 0.025)');
+  bg.addColorStop(0.4, 'rgba(249, 115, 22, 0.008)');
+  bg.addColorStop(1, 'transparent');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.012)';
+  ctx.lineWidth = 0.5;
+  const gs = 80;
+  for (let x = gs; x < W; x += gs) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = gs; y < H; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Vignette
+  const vig = ctx.createRadialGradient(cx, cy, Math.min(W,H) * 0.25, cx, cy, Math.max(W,H) * 0.65);
+  vig.addColorStop(0, 'transparent');
+  vig.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ── COLUMN HEADERS ──────────────────────────────────────
+
+function drawColumnHeaders(time) {
+  const a = Math.min(1, (time - animStart) / 4000);
+  if (a < 0.01) return;
+
+  const leftX = W * 0.14;
+  const rightX = W * 0.82;
+
+  // "EVENTS" header above left column
+  const firstEvent = nodes.find(n => n.type === 'event');
+  if (firstEvent && firstEvent.visible) {
+    ctx.font = '700 11px "JetBrains Mono"';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = `rgba(255,255,255,${0.28 * a})`;
+    ctx.fillText('EVENTS', leftX - 16, firstEvent.y - 30);
+
+    ctx.beginPath();
+    ctx.moveTo(leftX - 90, firstEvent.y - 16);
+    ctx.lineTo(leftX - 16, firstEvent.y - 16);
+    ctx.strokeStyle = `rgba(255,255,255,${0.08 * a})`;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // "DEPARTMENTS" header above right column
+  const firstDept = nodes.find(n => n.type === 'dept');
+  if (firstDept && firstDept.visible) {
+    ctx.font = '700 11px "JetBrains Mono"';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = `rgba(255,255,255,${0.28 * a})`;
+    ctx.fillText('DEPARTMENTS', rightX + 16, firstDept.y - 30);
+
+    ctx.beginPath();
+    ctx.moveTo(rightX + 16, firstDept.y - 16);
+    ctx.lineTo(rightX + 130, firstDept.y - 16);
+    ctx.strokeStyle = `rgba(255,255,255,${0.08 * a})`;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // Separator between departments and outputs
+  const lastDept = [...nodes].reverse().find(n => n.type === 'dept');
+  const firstOutput = nodes.find(n => n.type === 'output');
+  if (lastDept && lastDept.visible && firstOutput && firstOutput.visible) {
+    const sepY = (lastDept.y + firstOutput.y) / 2;
+    ctx.beginPath();
+    ctx.moveTo(firstOutput.x - 20, sepY);
+    ctx.lineTo(firstOutput.x + 120, sepY);
+    ctx.strokeStyle = `rgba(255,255,255,${0.05 * a})`;
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([2, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // "OUTPUTS" label
+    ctx.font = '700 9px "JetBrains Mono"';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = `rgba(255,255,255,${0.2 * a})`;
+    ctx.fillText('OUTPUTS', firstOutput.x + 16, firstOutput.y - 20);
+  }
+}
+
+// ── INTERACTION ─────────────────────────────────────────
+
+let hoveredNode = null;
+let isPaused = false;
+
+canvas.addEventListener('mousemove', (e) => {
+  const mx = e.clientX, my = e.clientY;
+  let found = null;
+  for (const n of nodes) {
+    if (!n.visible) continue;
+    const dx = mx - n.x, dy = my - n.y;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    const hr = n.type === 'center' ? n.radius + 12 : 28;
+    if (d < hr) { found = n; break; }
+  }
+  hoveredNode = found;
+  canvas.style.cursor = found ? 'pointer' : 'default';
+
+  const tt = document.getElementById('tooltip');
+  if (found && found.desc) {
+    document.getElementById('tooltipTitle').textContent = found.label;
+    document.getElementById('tooltipDesc').textContent = found.desc;
+    tt.classList.add('visible');
+    let tx = mx + 18, ty = my - 24;
+    tt.style.left = tx + 'px';
+    tt.style.top = ty + 'px';
+    requestAnimationFrame(() => {
+      const r = tt.getBoundingClientRect();
+      if (r.right > W - 10) tt.style.left = (mx - r.width - 18) + 'px';
+      if (r.bottom > H - 10) tt.style.top = (my - r.height - 10) + 'px';
+    });
+  } else {
+    tt.classList.remove('visible');
+  }
+});
+
+canvas.addEventListener('click', () => {
+  if (introActive) return;
+  isPaused = !isPaused;
+  document.getElementById('pauseIndicator').classList.toggle('visible', isPaused);
+});
+
+canvas.addEventListener('mouseleave', () => {
+  hoveredNode = null;
+  document.getElementById('tooltip').classList.remove('visible');
+});
+
+// ── ANIMATION STATE ──────────────────────────────────────
+
+let animStart = 0;
+let introActive = true;
+let counterTarget = 247;
+let counterCurrent = 0;
+let counterStartTime = 0;
+let counterStarted = false;
+const CYCLE_MS = 30000;
+
+function startAnim() {
+  introActive = false;
+  document.getElementById('intro').classList.add('fade-out');
+  animStart = performance.now();
+  setTimeout(() => document.getElementById('titleBar').classList.add('visible'), 400);
+  setTimeout(() => {
+    document.getElementById('statsBar').classList.add('visible');
+    counterStartTime = performance.now();
+    counterStarted = true;
+  }, 6500);
+}
+setTimeout(startAnim, 3000);
+
+function resetCycle() {
+  nodes.forEach(n => { n.visible = false; n.opacity = 0; });
+  particles.length = 0;
+  animStart = performance.now();
+  counterCurrent = 0;
+  counterStarted = false;
+  setTimeout(() => {
+    counterStartTime = performance.now();
+    counterStarted = true;
+  }, 5000);
+}
+
+// ── MAIN LOOP ────────────────────────────────────────────
+
+function frame(time) {
+  if (introActive) { requestAnimationFrame(frame); return; }
+
+  const elapsed = time - animStart;
+
+  if (!isPaused) {
+    // Reveal nodes
+    nodes.forEach(n => {
+      if (elapsed >= n.entryDelay && !n.visible) n.visible = true;
+      if (n.visible && n.opacity < 1) n.opacity = Math.min(1, n.opacity + 0.018);
+    });
+    if (elapsed >= centerNode.entryDelay) centerNode.visible = true;
+    if (centerNode.visible && centerNode.opacity < 1) centerNode.opacity = Math.min(1, centerNode.opacity + 0.012);
+
+    // Particles
+    spawnTick++;
+    if (spawnTick % 2 === 0 && elapsed > 2500) spawnFlowParticles();
+    for (let i = particles.length - 1; i >= 0; i--) {
+      particles[i].update();
+      if (!particles[i].alive) particles.splice(i, 1);
+    }
+    while (particles.length > 200) particles.shift();
+
+    // Counter
+    if (counterStarted) {
+      const ce = time - counterStartTime;
+      const p = Math.min(1, ce / 2500);
+      const eased = 1 - Math.pow(1 - p, 3);
+      counterCurrent = Math.floor(eased * counterTarget);
+      document.getElementById('eventCounter').textContent = counterCurrent;
+    }
+
+    // No reset — runs continuously forever
+  }
+
+  // DRAW
+  drawBg();
+
+  // Lifecycle ring removed — orbs had no clear meaning
+
+  // Connections
+  const ve = nodes.filter(n => n.type === 'event' && n.visible);
+  const vd = nodes.filter(n => n.type === 'dept' && n.visible);
+  const vo = nodes.filter(n => n.type === 'output' && n.visible);
+
+  if (centerNode.visible) {
+    ve.forEach(e => {
+      const hi = hoveredNode && (hoveredNode === e || hoveredNode.type === 'center' || hoveredNode.type === 'dept');
+      drawAnimatedCurve(e, centerNode, e.opacity * centerNode.opacity, e.color, time);
+      if (hi) drawCurve(e, centerNode, 0.3, e.color, 1.5);
+    });
+    vd.forEach(d => {
+      const hi = hoveredNode && (hoveredNode === d || hoveredNode.type === 'center' || hoveredNode.type === 'event');
+      drawAnimatedCurve(centerNode, d, d.opacity * centerNode.opacity, d.color, time);
+      if (hi) drawCurve(centerNode, d, 0.3, d.color, 1.5);
+    });
+    vo.forEach(o => {
+      const hi = hoveredNode && (hoveredNode === o || hoveredNode.type === 'center' || hoveredNode.type === 'event');
+      drawAnimatedCurve(centerNode, o, o.opacity * centerNode.opacity, o.color, time);
+      if (hi) drawCurve(centerNode, o, 0.3, o.color, 1.5);
+    });
+  }
+
+  // Particles
+  particles.forEach(p => p.draw(ctx));
+
+  // Nodes
+  nodes.forEach(n => { if (n.type !== 'center') drawRegularNode(n, time); });
+  drawCenter(time);
+
+  // Column headers
+  drawColumnHeaders(time);
+
+  requestAnimationFrame(frame);
+}
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
