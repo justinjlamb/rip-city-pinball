@@ -371,8 +371,7 @@ const TRIGGERS = [
   { x: 620, y: 360, w: 220, h: 120, from: 'playfield', to: 'right_ramp', dir: 'up',   label: 'RR Entrance' },
   // Right ramp exit: where outer/inner exit curves dump out (~y=1700)
   { x: 1280, y: 1650, w: 200, h: 200, from: 'right_ramp', to: 'playfield', dir: 'down', label: 'RR Exit' },
-  // Launcher exit: top of launcher channel
-  { x: 1500, y: 300, w: 150, h: 200, from: 'launcher', to: 'playfield', dir: 'up', label: 'Launcher Exit' },
+  // Launcher exit handled by hardcoded check in checkLayerTransitions() — no trigger zone needed
   // Moda Center entrance: between walls 112/113 (scoop)
   { x: 1100, y: 1280, w: 200, h: 160, from: 'playfield', to: 'moda', dir: 'up', label: 'Moda Center' },
 ];
@@ -651,7 +650,7 @@ function launchPinball() {
 // Phase 4: Plunger polish — tuned velocity range
 function firePinball() {
   const power = Math.max(0.2, plungerPower);
-  const vel = -12 - (power * 33); // range: -19 to -45 (playbook values)
+  const vel = -20 - (power * 40); // range: -28 to -60 (tuned for heavier ball + air friction)
   Body.setStatic(pinball, false);
   Body.setVelocity(pinball, { x: -1 - power * 2, y: vel });
   gameState = 'play';
@@ -707,10 +706,13 @@ function checkLayerTransitions() {
     }
   }
 
-  // Launcher one-way gate: switch to playfield once ball exits the launcher curve area
-  // The launcher inner curve ends at ~(1415, 408). Ball transitions when it's left of the channel.
-  if (ballLayer === 'launcher' && bx < 1550 && by < 700) {
+  // Launcher exit gate: simulates the one-way gate at the top of the launcher.
+  // Ball rounds the curve, reaches the top, and exits into the playfield.
+  // Teleport past the right boundary curves (same as a physical one-way gate).
+  if (ballLayer === 'launcher' && bx < 1560 && by < 480 && bvy > -5) {
     setBallLayer('playfield');
+    Body.setPosition(pinball, { x: 1300, y: 350 });
+    Body.setVelocity(pinball, { x: -10, y: 3 });
   }
 }
 
