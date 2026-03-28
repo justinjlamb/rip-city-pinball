@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RIP CITY PINBALL v2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="G"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// RIP CITY PINBALL v2 — Walls from mask contour (wall-data.json)
+// Table: table-layer0.png (1694 × 2376)
+// ═══════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('G');
+const ctx = canvas.getContext('2d');
+
+const tableImg = new Image();
+tableImg.src = 'table-layer0.png';
+let imageLoaded = false;
+tableImg.onload = () => { imageLoaded = true; };
+const IMG_W = 1694, IMG_H = 2376;
+
+// ── CONSTANTS ───────────────────────────────────────────────
+const BALL_RADIUS = 24;
+const PADDLE_LEN = 260;
+const PADDLE_WIDTH = 30;
+const FLIP_REST = 0.5;
+const FLIP_ACTIVE = -0.5;
+const FLIP_UP_SPEED = 0.20;
+const FLIP_DN_SPEED = 0.08;
+const WALL_T = 8;
+const MAX_SPEED = 38;
+
+// Drain gap: vertices 63→64 (the opening where ball exits)
+const DRAIN_VERTEX_A = 63;
+const DRAIN_VERTEX_B = 64;
+
+// ── MATTER.JS ───────────────────────────────────────────────
+const { Engine, World, Bodies, Body, Composite, Events } = Matter;
+
+const engine = Engine.create();
+engine.gravity.y = 1.0;
+engine.positionIterations = 30;
+engine.velocityIterations = 10;
+const world = engine.world;
+
+// ── STATE ───────────────────────────────────────────────────
+let gameState = 'attract';
+let ballNum = 0, totalBalls = 3;
+let plungerPower = 0, plungerCharging = false;
+let isLeftUp = false, isRightUp = false;
+let leftAngle = FLIP_REST, rightAngle = FLIP_REST;
+let ball;
+let drainTimer = 0;
+let stuckFrames = 0;
+const SLING_FRONT_DEBUG = new Set(); // populated by loadWalls, used by debug renderer
+
+// Loaded from wall-data.json
+let LEFT_HINGE = { x: 520, y: 2138 };
+let RIGHT_HINGE = { x: 1064, y: 2136 };
+let BALL_START = { x: 1535, y: 2100 };
+
+// ── SCALING ─────────────────────────────────────────────────
+let scale = 1, offX = 0, offY = 0;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  scale = Math.min(canvas.width / IMG_W, canvas.height / IMG_H);
+  offX = (canvas.width - IMG_W * scale) / 2;
+  offY = (canvas.height - IMG_H * scale) / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function px(x) { return offX + x * scale; }
+function py(y) { return offY + y * scale; }
+function ps(s) { return s * scale; }
+
+// ═══════════════════════════════════════════════════════════════
+// WALL LOADING FROM JSON
+// ═══════════════════════════════════════════════════════════════
+
+function createWall(x1, y1, x2, y2, label) {
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return;
+  const ang = Math.atan2(dy, dx);
+  const w = Bodies.rectangle(cx, cy, len, WALL_T, {
+    isStatic: true, angle: ang, label: label || 'wall',
+    friction: 0.3, restitution: 0.4,
+  });
+  World.add(world, w);
+}
+
+function createCornerCircle(x, y) {
+  const c = Bodies.circle(x, y, WALL_T / 2, {
+    isStatic: true, label: 'corner',
+    friction: 0.3, restitution: 0.4,
+  });
+  World.add(world, c);
+}
+
+async function loadWalls() {
+  const resp = await fetch('wall-data.json');
+  const data = await resp.json();
+
+  // Set positions from JSON
+  LEFT_HINGE = data.flipperLeft;
+  RIGHT_HINGE = data.flipperRight;
+  BALL_START = data.ballStart;
+
+  // Create wall segments, skipping the drain gap
+  const walls = data.walls;
+  const vertices = data.vertices;
+
+  for (let i = 0; i < walls.length; i++) {
+    // Skip the drain opening (segment from vertex DRAIN_VERTEX_A to DRAIN_VERTEX_B)
+    if (i === DRAIN_VERTEX_A) continue;
+
+    const [x1, y1, x2, y2] = walls[i];
+    createWall(x1, y1, x2, y2, 'w-' + i);
+  }
+
+  // Corner circles at each vertex to fill gaps between wall segments
+  for (let i = 0; i < vertices.length; i++) {
+    // Skip drain gap vertices (don't plug the drain)
+    if (i === DRAIN_VERTEX_A || i === DRAIN_VERTEX_B) continue;
+    createCornerCircle(vertices[i][0], vertices[i][1]);
+  }
+
+  // Interior walls (slingshot triangles, outlane rails)
+  // Holes 1-2 are slingshots (0-23, 24-47), holes 3-4 are outlane regions (48+)
+  if (data.interiorWalls) {
+    for (let i = 0; i < data.interiorWalls.length; i++) {
+      const [x1, y1, x2, y2] = data.interiorWalls[i];
+      const label = i < 48 ? 'sling-' + i : 'int-' + i;
+      createWall(x1, y1, x2, y2, label);
+    }
+  }
+  if (data.interiorVertices) {
+    for (const [x, y] of data.interiorVertices) {
+      createCornerCircle(x, y);
+    }
+  }
+
+  const intCount = data.interiorWalls ? data.interiorWalls.length : 0;
+  console.log(`Loaded ${walls.length - 1} outer + ${intCount} interior walls`);
+  console.log(`Flipper L: (${LEFT_HINGE.x}, ${LEFT_HINGE.y})`);
+  console.log(`Flipper R: (${RIGHT_HINGE.x}, ${RIGHT_HINGE.y})`);
+  console.log(`Ball start: (${BALL_START.x}, ${BALL_START.y})`);
+
+  // Create flippers after positions are loaded
+  createFlippers();
+
+  // Slingshot bounce: when ball hits a sling wall, fire it away
+  const SLING_LEFT_CENTER = { x: 383, y: 1780 };
+  const SLING_RIGHT_CENTER = { x: 1186, y: 1807 };
+  const SLING_FORCE = 18;
+
+  // Front-facing sling walls only (inner face, excluding bottom hook)
+  // Left sling: walls 0-5 (stops before bottom curve at y≈1900)
+  // Right sling: walls 41-47 (stops before bottom curve at y≈1900)
+  for (let i = 0; i <= 5; i++) SLING_FRONT_DEBUG.add('sling-' + i);
+  for (let i = 41; i <= 47; i++) SLING_FRONT_DEBUG.add('sling-' + i);
+
+  Events.on(engine, 'collisionStart', event => {
+    for (const pair of event.pairs) {
+      const a = pair.bodyA, b = pair.bodyB;
+      const ballBody = a.label === 'ball' ? a : b.label === 'ball' ? b : null;
+      const wallBody = a.label === 'ball' ? b : a;
+
+      if (!ballBody || !SLING_FRONT_DEBUG.has(wallBody.label)) continue;
+
+      // Determine which slingshot was hit
+      const slingIdx = parseInt(wallBody.label.split('-')[1]);
+      const center = slingIdx < 24 ? SLING_LEFT_CENTER : SLING_RIGHT_CENTER;
+
+      // Fire ball away from slingshot center
+      const dx = ballBody.position.x - center.x;
+      const dy = ballBody.position.y - center.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      Body.setVelocity(ballBody, {
+        x: (dx / dist) * SLING_FORCE,
+        y: (dy / dist) * SLING_FORCE
+      });
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FLIPPERS
+// ═══════════════════════════════════════════════════════════════
+
+let leftPaddle, rightPaddle;
+
+function createFlippers() {
+  leftPaddle = Bodies.rectangle(
+    LEFT_HINGE.x, LEFT_HINGE.y, PADDLE_LEN, PADDLE_WIDTH,
+    { isStatic: true, label: 'left-flipper', chamfer: { radius: PADDLE_WIDTH / 2 },
+      friction: 0.8, restitution: 0.1 }
+  );
+  rightPaddle = Bodies.rectangle(
+    RIGHT_HINGE.x, RIGHT_HINGE.y, PADDLE_LEN, PADDLE_WIDTH,
+    { isStatic: true, label: 'right-flipper', chamfer: { radius: PADDLE_WIDTH / 2 },
+      friction: 0.8, restitution: 0.1 }
+  );
+  World.add(world, [leftPaddle, rightPaddle]);
+}
+
+function positionFlipper(body, hinge, angle) {
+  const halfLen = PADDLE_LEN / 2;
+  Body.setAngle(body, angle, true);
+  Body.setPosition(body, {
+    x: hinge.x + Math.cos(angle) * halfLen,
+    y: hinge.y + Math.sin(angle) * halfLen
+  }, true);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BALL
+// ═══════════════════════════════════════════════════════════════
+
+function createBall(x, y) {
+  return Bodies.circle(x, y, BALL_RADIUS, {
+    label: 'ball', restitution: 0.3, friction: 0.05,
+    density: 0.0025, frictionAir: 0.001,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════════════════════════
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') isLeftUp = true;
+  if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') isRightUp = true;
+  if (e.key === ' ') {
+    e.preventDefault();
+    if (gameState === 'attract') startGame();
+    else if (gameState === 'launch') plungerCharging = true;
+  }
+  if (e.key === 'Enter' && gameState === 'attract') startGame();
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') isLeftUp = false;
+  if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') isRightUp = false;
+  if (e.key === ' ' && plungerCharging) {
+    e.preventDefault();
+    launchBall();
+  }
+});
+
+// Touch: left half = left flipper, right half = right flipper
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (gameState === 'attract') { startGame(); return; }
+  if (gameState === 'launch') { plungerCharging = true; return; }
+  for (const t of e.changedTouches) {
+    if (t.clientX < canvas.width / 2) isLeftUp = true;
+    else isRightUp = true;
+  }
+});
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (plungerCharging) { launchBall(); return; }
+  for (const t of e.changedTouches) {
+    if (t.clientX < canvas.width / 2) isLeftUp = false;
+    else isRightUp = false;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GAME FLOW
+// ═══════════════════════════════════════════════════════════════
+
+function startGame() {
+  gameState = 'launch';
+  ballNum = 1;
+  serveBall();
+}
+
+function serveBall() {
+  if (ball) World.remove(world, ball);
+  ball = createBall(BALL_START.x, BALL_START.y);
+  Body.setVelocity(ball, { x: 0, y: 0 });
+  World.add(world, ball);
+  gameState = 'launch';
+  plungerPower = 0;
+  plungerCharging = false;
+}
+
+function launchBall() {
+  if (gameState !== 'launch') return;
+  const power = Math.min(plungerPower, 1);
+  Body.setVelocity(ball, { x: 0, y: -60 * power - 20 });
+  gameState = 'play';
+  plungerPower = 0;
+  plungerCharging = false;
+}
+
+function drainBall() {
+  if (gameState === 'drain') return;
+  gameState = 'drain';
+  drainTimer = 90;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UPDATE
+// ═══════════════════════════════════════════════════════════════
+
+function update() {
+  // Plunger
+  if (plungerCharging && gameState === 'launch') {
+    plungerPower = Math.min(plungerPower + 0.02, 1);
+  }
+
+  // Flippers
+  if (!leftPaddle) {
+    // Walls not loaded yet — skip flipper updates but continue to drain/speed checks
+  } else {
+
+  const lTarget = isLeftUp ? FLIP_ACTIVE : FLIP_REST;
+  const rTarget = isRightUp ? FLIP_ACTIVE : FLIP_REST;
+  const lSpd = isLeftUp ? FLIP_UP_SPEED : FLIP_DN_SPEED;
+  const rSpd = isRightUp ? FLIP_UP_SPEED : FLIP_DN_SPEED;
+
+  if (leftAngle < lTarget) leftAngle = Math.min(leftAngle + lSpd, lTarget);
+  else if (leftAngle > lTarget) leftAngle = Math.max(leftAngle - lSpd, lTarget);
+
+  if (rightAngle < rTarget) rightAngle = Math.min(rightAngle + rSpd, rTarget);
+  else if (rightAngle > rTarget) rightAngle = Math.max(rightAngle - rSpd, rTarget);
+
+  positionFlipper(leftPaddle, LEFT_HINGE, leftAngle);
+  positionFlipper(rightPaddle, RIGHT_HINGE, Math.PI - rightAngle);
+
+  } // end flipper guard
+
+  // Speed clamp
+  if (ball) {
+    const v = ball.velocity;
+    const spd = Math.sqrt(v.x * v.x + v.y * v.y);
+    if (spd > MAX_SPEED) {
+      const f = MAX_SPEED / spd;
+      Body.setVelocity(ball, { x: v.x * f, y: v.y * f });
+    }
+  }
+
+  // Drain detection
+  if (ball && gameState === 'play') {
+    if (ball.position.y > IMG_H + 100) {
+      drainBall();
+    }
+
+    // Launcher re-entry: if ball rolls back into the launcher channel,
+    // switch to launch state so the player can fire it again
+    if (ball.position.x > 1480 && ball.position.y > 1800) {
+      const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
+      if (spd < 2) {
+        gameState = 'launch';
+        plungerPower = 0;
+        plungerCharging = false;
+        stuckFrames = 0;
+      }
+    }
+
+    // Stuck ball detection: if ball is nearly stationary for 3 seconds, nudge it
+    const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
+    if (spd < 0.5) {
+      stuckFrames++;
+      if (stuckFrames > 180) { // 3 sec at 60fps
+        Body.setVelocity(ball, { x: (Math.random() - 0.5) * 8, y: -5 });
+        stuckFrames = 0;
+      }
+    } else {
+      stuckFrames = 0;
+    }
+  }
+
+  // Drain timer
+  if (gameState === 'drain') {
+    drainTimer--;
+    if (drainTimer <= 0) {
+      ballNum++;
+      if (ballNum > totalBalls) gameState = 'attract';
+      else serveBall();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (imageLoaded) {
+    ctx.drawImage(tableImg, offX, offY, IMG_W * scale, IMG_H * scale);
+  }
+
+  // Ball
+  if (ball && gameState !== 'attract') {
+    const bx = px(ball.position.x), by = py(ball.position.y);
+    const br = ps(BALL_RADIUS);
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fillStyle = '#c0c0c0';
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = ps(2);
+    ctx.stroke();
+    // Highlight
+    ctx.beginPath();
+    ctx.arc(bx - br * 0.25, by - br * 0.25, br * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fill();
+  }
+
+  // Flippers
+  if (leftPaddle) {
+    drawFlipper(leftPaddle, '#cc0000');
+    drawFlipper(rightPaddle, '#cc0000');
+  }
+
+  // Plunger power bar
+  if (gameState === 'launch') {
+    const bx = px(BALL_START.x - 25), by = py(BALL_START.y);
+    const bh = ps(160), bw = ps(50);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(bx, by - bh, bw, bh);
+    const fh = bh * plungerPower;
+    ctx.fillStyle = plungerPower > 0.8 ? '#ff2244' : '#ff6b35';
+    ctx.fillRect(bx, by - fh, bw, fh);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = ps(2);
+    ctx.strokeRect(bx, by - bh, bw, bh);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${ps(14)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('HOLD', px(BALL_START.x), py(BALL_START.y - 180));
+    ctx.fillText('SPACE', px(BALL_START.x), py(BALL_START.y - 160));
+  }
+
+  // HUD
+  if (gameState === 'play' || gameState === 'launch') {
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${ps(26)}px sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText('BALL ' + ballNum + '/' + totalBalls, px(75), py(55));
+  }
+
+  // Attract mode
+  if (gameState === 'attract') {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${ps(56)}px sans-serif`;
+    ctx.fillText('RIP CITY PINBALL', px(IMG_W / 2), py(IMG_H / 2 - 40));
+    ctx.font = `${ps(28)}px sans-serif`;
+    ctx.fillText('PRESS SPACE TO START', px(IMG_W / 2), py(IMG_H / 2 + 40));
+    ctx.font = `${ps(20)}px sans-serif`;
+    ctx.fillText('Z / \u2190  Left Flipper    M / \u2192  Right Flipper    SPACE  Plunger', px(IMG_W / 2), py(IMG_H / 2 + 90));
+  }
+
+  // Drain / game over
+  if (gameState === 'drain') {
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${ps(44)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      ballNum >= totalBalls ? 'GAME OVER' : 'BALL ' + (ballNum + 1),
+      px(IMG_W / 2), py(IMG_H / 2)
+    );
+  }
+}
+
+function drawFlipper(body, color) {
+  ctx.save();
+  ctx.translate(px(body.position.x), py(body.position.y));
+  ctx.rotate(body.angle);
+  const w = ps(PADDLE_LEN), h = ps(PADDLE_WIDTH);
+  const r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(-w/2 + r, -h/2);
+  ctx.lineTo(w/2 - r, -h/2);
+  ctx.arc(w/2 - r, 0, r, -Math.PI/2, Math.PI/2);
+  ctx.lineTo(-w/2 + r, h/2);
+  ctx.arc(-w/2 + r, 0, r, Math.PI/2, -Math.PI/2);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = '#800';
+  ctx.lineWidth = ps(2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DEBUG — Shift+D shows all physics bodies
+// ═══════════════════════════════════════════════════════════════
+
+let debug = false;
+document.addEventListener('keydown', e => {
+  if (e.key === 'D' && e.shiftKey) debug = !debug;
+});
+
+function renderDebug() {
+  if (!debug) return;
+  const bodies = Composite.allBodies(world);
+  for (const b of bodies) {
+    if (b.label === 'ball') continue;
+    ctx.beginPath();
+    ctx.moveTo(px(b.vertices[0].x), py(b.vertices[0].y));
+    for (let i = 1; i < b.vertices.length; i++)
+      ctx.lineTo(px(b.vertices[i].x), py(b.vertices[i].y));
+    ctx.closePath();
+    // Color by type: green = active sling face, cyan = wall, yellow = corner
+    let color = 'rgba(0,255,255,0.6)';
+    let lineW = 1;
+    if (b.label === 'corner') {
+      color = 'rgba(255,255,0,0.3)';
+    } else if (b.label.startsWith('sling-') && SLING_FRONT_DEBUG.has(b.label)) {
+      color = 'rgba(0,255,0,1)';
+      lineW = 3;
+    } else if (b.label.startsWith('sling-')) {
+      color = 'rgba(255,0,255,0.5)';
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineW;
+    ctx.stroke();
+  }
+
+  if (ball) {
+    ctx.fillStyle = '#0f0';
+    ctx.font = '12px monospace';
+    const v = ball.velocity;
+    const spd = Math.sqrt(v.x * v.x + v.y * v.y).toFixed(1);
+    ctx.fillText(
+      `ball: (${ball.position.x.toFixed(0)}, ${ball.position.y.toFixed(0)}) spd:${spd}`,
+      px(70), py(IMG_H - 30)
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT — load walls then start game loop
+// ═══════════════════════════════════════════════════════════════
+
+let lastTime = 0;
+function gameLoop(ts) {
+  const dt = Math.min(ts - lastTime, 32);
+  lastTime = ts;
+
+  // CRITICAL: update flipper positions BEFORE physics step
+  // so the engine sees their velocity during collision resolution
+  update();
+  Engine.update(engine, dt / 2);
+  Engine.update(engine, dt / 2);
+
+  render();
+  renderDebug();
+  requestAnimationFrame(gameLoop);
+}
+
+// Load walls, then start
+loadWalls().then(() => {
+  requestAnimationFrame(gameLoop);
+}).catch(err => {
+  console.error('Failed to load wall-data.json:', err);
+  // Start anyway with no walls
+  requestAnimationFrame(gameLoop);
+});
+</script>
+</body>
+</html>

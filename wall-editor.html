@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wall Contour Editor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a1a; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    background: rgba(0,0,0,0.9); padding: 8px 16px; display: flex; gap: 12px; align-items: center;
+    font-size: 13px; border-bottom: 1px solid #333;
+  }
+  #toolbar button {
+    padding: 6px 14px; border: 1px solid #555; background: #333; color: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 13px;
+  }
+  #toolbar button:hover { background: #444; }
+  #toolbar button.active { background: #2563eb; border-color: #3b82f6; }
+  #toolbar .sep { width: 1px; height: 24px; background: #444; }
+  #toolbar .info { color: #888; }
+  #toolbar .mode { color: #fbbf24; font-weight: bold; }
+  canvas { display: block; cursor: crosshair; }
+  #export-panel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #222; border: 1px solid #555; border-radius: 8px; padding: 20px;
+    z-index: 20; max-width: 600px; width: 90%;
+  }
+  #export-panel textarea { width: 100%; height: 200px; background: #111; color: #0f0; border: 1px solid #444; font-family: monospace; font-size: 11px; padding: 8px; }
+  #export-panel button { margin-top: 10px; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="btn-move" class="active" onclick="setMode('move')">Move (M)</button>
+  <button id="btn-add" onclick="setMode('add')">Add Point (A)</button>
+  <button id="btn-delete" onclick="setMode('delete')">Delete Point (D)</button>
+  <div class="sep"></div>
+  <button id="btn-flipL" onclick="setMode('flipperL')">Set Flipper L</button>
+  <button id="btn-flipR" onclick="setMode('flipperR')">Set Flipper R</button>
+  <button id="btn-ball" onclick="setMode('ball')">Set Ball Start</button>
+  <div class="sep"></div>
+  <button onclick="exportData()">Export JSON</button>
+  <button onclick="saveToFile()">Save to File</button>
+  <div class="sep"></div>
+  <span class="mode" id="mode-label">MOVE</span>
+  <span class="info" id="info">Loading...</span>
+</div>
+<canvas id="C"></canvas>
+<div id="overlay" onclick="closeExport()"></div>
+<div id="export-panel">
+  <h3 style="margin-bottom:10px">Exported Wall Data</h3>
+  <textarea id="export-text" readonly></textarea>
+  <button onclick="copyExport()">Copy to Clipboard</button>
+  <button onclick="closeExport()">Close</button>
+</div>
+
+<script>
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+
+const IMG_W = 1694, IMG_H = 2376;
+const tableImg = new Image();
+tableImg.src = 'table-layer0.png';
+
+let data = null;
+let vertices = []; // [{x, y}]
+let flipperL = null;
+let flipperR = null;
+let ballStart = null;
+
+let mode = 'move'; // move, add, delete, flipperL, flipperR, ball
+let dragIdx = -1;
+let dragOffX = 0, dragOffY = 0;
+let hoveredIdx = -1;
+
+// View
+let scale = 1, offX = 0, offY = 0;
+let panX = 0, panY = 0;
+let isPanning = false, panStartX = 0, panStartY = 0;
+let spaceDown = false;
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight - 40;
+  canvas.style.marginTop = '40px';
+  const sx = canvas.width / IMG_W;
+  const sy = canvas.height / IMG_H;
+  scale = Math.min(sx, sy);
+  offX = (canvas.width - IMG_W * scale) / 2;
+  offY = (canvas.height - IMG_H * scale) / 2;
+  render();
+}
+
+// Convert image coords ↔ screen coords
+function toScreen(ix, iy) {
+  return [offX + (ix + panX) * scale, offY + (iy + panY) * scale];
+}
+function toImage(sx, sy) {
+  return [(sx - offX) / scale - panX, (sy - offY) / scale - panY];
+}
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
+  const btnMap = { move: 'btn-move', add: 'btn-add', delete: 'btn-delete', flipperL: 'btn-flipL', flipperR: 'btn-flipR', ball: 'btn-ball' };
+  const btn = document.getElementById(btnMap[m]);
+  if (btn) btn.classList.add('active');
+  document.getElementById('mode-label').textContent = m.toUpperCase();
+  render();
+}
+
+// Load wall data
+async function loadData() {
+  const resp = await fetch('wall-data.json');
+  data = await resp.json();
+  vertices = data.vertices.map(([x, y]) => ({ x, y }));
+  flipperL = { ...data.flipperLeft };
+  flipperR = { ...data.flipperRight };
+  ballStart = { ...data.ballStart };
+  document.getElementById('info').textContent = `${vertices.length} vertices loaded`;
+  render();
+}
+
+function findNearestVertex(ix, iy, maxDist = 20) {
+  let best = -1, bestDist = maxDist;
+  for (let i = 0; i < vertices.length; i++) {
+    const dx = vertices[i].x - ix, dy = vertices[i].y - iy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  }
+  return best;
+}
+
+function findNearestEdge(ix, iy) {
+  let best = -1, bestDist = 30;
+  for (let i = 0; i < vertices.length; i++) {
+    const j = (i + 1) % vertices.length;
+    const ax = vertices[i].x, ay = vertices[i].y;
+    const bx = vertices[j].x, by = vertices[j].y;
+    // Point-to-segment distance
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1) continue;
+    let t = ((ix - ax) * dx + (iy - ay) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = ax + t * dx, py = ay + t * dy;
+    const dist = Math.sqrt((ix - px) ** 2 + (iy - py) ** 2);
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  }
+  return best;
+}
+
+// Mouse handlers
+canvas.addEventListener('mousedown', e => {
+  const [ix, iy] = toImage(e.clientX, e.clientY - 40);
+
+  if (e.button === 1 || (e.button === 0 && spaceDown)) {
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    return;
+  }
+
+  if (mode === 'move') {
+    const idx = findNearestVertex(ix, iy);
+    if (idx >= 0) {
+      dragIdx = idx;
+      dragOffX = vertices[idx].x - ix;
+      dragOffY = vertices[idx].y - iy;
+    }
+  } else if (mode === 'add') {
+    const edgeIdx = findNearestEdge(ix, iy);
+    if (edgeIdx >= 0) {
+      vertices.splice(edgeIdx + 1, 0, { x: Math.round(ix), y: Math.round(iy) });
+      dragIdx = edgeIdx + 1;
+      updateInfo();
+    }
+  } else if (mode === 'delete') {
+    const idx = findNearestVertex(ix, iy);
+    if (idx >= 0 && vertices.length > 3) {
+      vertices.splice(idx, 1);
+      updateInfo();
+    }
+  } else if (mode === 'flipperL') {
+    flipperL = { x: Math.round(ix), y: Math.round(iy) };
+    setMode('move');
+  } else if (mode === 'flipperR') {
+    flipperR = { x: Math.round(ix), y: Math.round(iy) };
+    setMode('move');
+  } else if (mode === 'ball') {
+    ballStart = { x: Math.round(ix), y: Math.round(iy) };
+    setMode('move');
+  }
+  render();
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (isPanning) {
+    panX += (e.clientX - panStartX) / scale;
+    panY += (e.clientY - panStartY) / scale;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    render();
+    return;
+  }
+
+  const [ix, iy] = toImage(e.clientX, e.clientY - 40);
+
+  if (dragIdx >= 0) {
+    vertices[dragIdx].x = Math.round(ix + dragOffX);
+    vertices[dragIdx].y = Math.round(iy + dragOffY);
+    render();
+    return;
+  }
+
+  const prev = hoveredIdx;
+  hoveredIdx = findNearestVertex(ix, iy);
+  if (hoveredIdx !== prev) render();
+
+  // Show coordinates
+  document.getElementById('info').textContent =
+    `${vertices.length} vertices | (${Math.round(ix)}, ${Math.round(iy)})`;
+});
+
+canvas.addEventListener('mouseup', () => {
+  dragIdx = -1;
+  isPanning = false;
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const [ix, iy] = toImage(e.clientX, e.clientY - 40);
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  scale *= factor;
+  // Adjust pan to zoom toward cursor
+  panX = ix - (e.clientX - offX) / scale;
+  panY = iy - (e.clientY - 40 - offY) / scale;
+  // Recalculate — simpler: just change scale and re-derive offsets
+  offX = e.clientX - (ix + panX) * scale;
+  offY = e.clientY - 40 - (iy + panY) * scale;
+  render();
+}, { passive: false });
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === ' ') {
+    e.preventDefault();
+    spaceDown = true;
+    canvas.style.cursor = 'grab';
+    return;
+  }
+  if (e.key === 'm' || e.key === 'M') setMode('move');
+  if (e.key === 'a' || e.key === 'A') setMode('add');
+  if (e.key === 'd' || e.key === 'D') setMode('delete');
+  // Cmd+Plus / Cmd+Minus for zoom
+  if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    const cx = canvas.width / 2, cy = canvas.height / 2;
+    const [ix, iy] = toImage(cx, cy);
+    scale *= 1.25;
+    offX = cx - (ix + panX) * scale;
+    offY = cy - (iy + panY) * scale;
+    render();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === '-') {
+    e.preventDefault();
+    const cx = canvas.width / 2, cy = canvas.height / 2;
+    const [ix, iy] = toImage(cx, cy);
+    scale *= 0.8;
+    offX = cx - (ix + panX) * scale;
+    offY = cy - (iy + panY) * scale;
+    render();
+  }
+  // Cmd+0 to reset zoom
+  if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+    e.preventDefault();
+    panX = 0; panY = 0;
+    resize();
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') {
+    spaceDown = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+function updateInfo() {
+  document.getElementById('info').textContent = `${vertices.length} vertices`;
+}
+
+// Render
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Table image
+  if (tableImg.complete) {
+    const [sx, sy] = toScreen(0, 0);
+    ctx.drawImage(tableImg, sx, sy, IMG_W * scale, IMG_H * scale);
+  }
+
+  if (!vertices.length) return;
+
+  // Draw wall segments (cyan lines)
+  ctx.beginPath();
+  const [fx, fy] = toScreen(vertices[0].x, vertices[0].y);
+  ctx.moveTo(fx, fy);
+  for (let i = 1; i < vertices.length; i++) {
+    const [x, y] = toScreen(vertices[i].x, vertices[i].y);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Draw vertices
+  for (let i = 0; i < vertices.length; i++) {
+    const [x, y] = toScreen(vertices[i].x, vertices[i].y);
+    const r = i === hoveredIdx ? 8 : 5;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = i === hoveredIdx ? '#ff0' : i === dragIdx ? '#f00' : '#ff0';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Index label
+    if (scale > 0.3) {
+      ctx.fillStyle = '#fff';
+      ctx.font = '10px monospace';
+      ctx.fillText(i.toString(), x + 8, y - 4);
+    }
+  }
+
+  // Draw flipper positions
+  if (flipperL) {
+    const [x, y] = toScreen(flipperL.x, flipperL.y);
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('L', x - 4, y + 4);
+  }
+  if (flipperR) {
+    const [x, y] = toScreen(flipperR.x, flipperR.y);
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('R', x - 4, y + 4);
+  }
+
+  // Draw ball start
+  if (ballStart) {
+    const [x, y] = toScreen(ballStart.x, ballStart.y);
+    ctx.beginPath();
+    ctx.arc(x, y, 14, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ff6b35';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = '#ff6b35';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText('BALL', x - 14, y - 16);
+  }
+}
+
+function buildOutput() {
+  const walls = [];
+  for (let i = 0; i < vertices.length; i++) {
+    const j = (i + 1) % vertices.length;
+    walls.push([vertices[i].x, vertices[i].y, vertices[j].x, vertices[j].y]);
+  }
+  return {
+    meta: {
+      source: 'wall-editor.html (manually adjusted)',
+      dimensions: [IMG_W, IMG_H],
+      wallSegments: walls.length,
+      vertexCount: vertices.length,
+    },
+    walls,
+    vertices: vertices.map(v => [v.x, v.y]),
+    flipperLeft: flipperL,
+    flipperRight: flipperR,
+    ballStart,
+  };
+}
+
+function exportData() {
+  const output = buildOutput();
+  document.getElementById('export-text').value = JSON.stringify(output, null, 2);
+  document.getElementById('export-panel').style.display = 'block';
+  document.getElementById('overlay').style.display = 'block';
+}
+
+function copyExport() {
+  const ta = document.getElementById('export-text');
+  ta.select();
+  document.execCommand('copy');
+  alert('Copied to clipboard');
+}
+
+function closeExport() {
+  document.getElementById('export-panel').style.display = 'none';
+  document.getElementById('overlay').style.display = 'none';
+}
+
+async function saveToFile() {
+  const output = buildOutput();
+  const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'wall-data.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// Init
+window.addEventListener('resize', resize);
+tableImg.onload = () => { resize(); loadData(); };
+if (tableImg.complete) { resize(); loadData(); }
+</script>
+</body>
+</html>
