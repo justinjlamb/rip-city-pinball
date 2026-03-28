@@ -52,6 +52,35 @@ engine.positionIterations = 30;
 engine.velocityIterations = 10;
 const world = engine.world;
 
+// ── AUDIO ───────────────────────────────────────────────────
+let audioCtx;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, dur, type, vol) {
+  if (!audioCtx) return;
+  try {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = type || 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || 0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+
+function sndBumper()  { playTone(660, 0.08, 'square', 0.1); playTone(880, 0.06, 'sine', 0.06); }
+function sndSling()   { playTone(550, 0.06, 'square', 0.08); playTone(770, 0.05, 'sine', 0.05); }
+function sndFlipper() { playTone(220, 0.04, 'triangle', 0.05); }
+function sndLaunch()  { playTone(110, 0.3, 'sawtooth', 0.06); setTimeout(() => playTone(440, 0.1, 'sine', 0.08), 200); }
+function sndDrain()   { playTone(200, 0.15, 'sine', 0.08); setTimeout(() => playTone(150, 0.2, 'sine', 0.06), 100); setTimeout(() => playTone(100, 0.3, 'sine', 0.06), 200); }
+
 // ── STATE ───────────────────────────────────────────────────
 let gameState = 'attract';
 let ballNum = 0, totalBalls = 3;
@@ -61,7 +90,25 @@ let leftAngle = FLIP_REST, rightAngle = FLIP_REST;
 let ball;
 let drainTimer = 0;
 let stuckFrames = 0;
-const SLING_FRONT_DEBUG = new Set(); // populated by loadWalls, used by debug renderer
+const SLING_FRONT_DEBUG = new Set();
+
+// ── SCORING ─────────────────────────────────────────────────
+let score = 0;
+let highScore = 0;
+let lastMessage = '';
+let messageTimer = 0;
+
+const POINTS = {
+  BUMPER: 1000,
+  SLINGSHOT: 500,
+  LAUNCH: 100,
+};
+
+function addScore(pts, label) {
+  score += pts;
+  lastMessage = label + ' +' + pts.toLocaleString();
+  messageTimer = 90; // 1.5 sec
+}
 
 // Loaded from wall-data.json
 let LEFT_HINGE = { x: 520, y: 2138 };
@@ -99,6 +146,19 @@ function createWall(x1, y1, x2, y2, label) {
     friction: 0.3, restitution: 0.4,
   });
   World.add(world, w);
+}
+
+const BUMPER_RADIUS = 40;
+const BUMPER_FORCE = 20;
+const bumperBodies = [];
+
+function createBumper(x, y) {
+  const b = Bodies.circle(x, y, BUMPER_RADIUS, {
+    isStatic: true, label: 'bumper',
+    friction: 0, restitution: 0.5,
+  });
+  World.add(world, b);
+  bumperBodies.push(b);
 }
 
 function createCornerCircle(x, y) {
@@ -161,6 +221,12 @@ async function loadWalls() {
   // Create flippers after positions are loaded
   createFlippers();
 
+  // Bumpers — three circular pop bumpers in triangle formation
+  // Positioned in the upper-mid playfield around the logo area
+  createBumper(650, 750);   // upper left
+  createBumper(950, 750);   // upper right
+  createBumper(800, 1000);  // lower center
+
   // Slingshot bounce: when ball hits a sling wall, fire it away
   const SLING_LEFT_CENTER = { x: 383, y: 1780 };
   const SLING_RIGHT_CENTER = { x: 1186, y: 1807 };
@@ -176,22 +242,37 @@ async function loadWalls() {
     for (const pair of event.pairs) {
       const a = pair.bodyA, b = pair.bodyB;
       const ballBody = a.label === 'ball' ? a : b.label === 'ball' ? b : null;
-      const wallBody = a.label === 'ball' ? b : a;
+      const otherBody = ballBody === a ? b : a;
 
-      if (!ballBody || !SLING_FRONT_DEBUG.has(wallBody.label)) continue;
+      if (!ballBody) continue;
 
-      // Determine which slingshot was hit
-      const slingIdx = parseInt(wallBody.label.split('-')[1]);
-      const center = slingIdx < 24 ? SLING_LEFT_CENTER : SLING_RIGHT_CENTER;
+      // Slingshot hit (front face only)
+      if (SLING_FRONT_DEBUG.has(otherBody.label)) {
+        const slingIdx = parseInt(otherBody.label.split('-')[1]);
+        const center = slingIdx < 24 ? SLING_LEFT_CENTER : SLING_RIGHT_CENTER;
+        const dx = ballBody.position.x - center.x;
+        const dy = ballBody.position.y - center.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        Body.setVelocity(ballBody, {
+          x: (dx / dist) * SLING_FORCE,
+          y: (dy / dist) * SLING_FORCE
+        });
+        sndSling();
+        addScore(POINTS.SLINGSHOT, 'SLINGSHOT');
+      }
 
-      // Fire ball away from slingshot center
-      const dx = ballBody.position.x - center.x;
-      const dy = ballBody.position.y - center.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      Body.setVelocity(ballBody, {
-        x: (dx / dist) * SLING_FORCE,
-        y: (dy / dist) * SLING_FORCE
-      });
+      // Bumper hit — pop the ball away from bumper center
+      if (otherBody.label === 'bumper') {
+        const dx = ballBody.position.x - otherBody.position.x;
+        const dy = ballBody.position.y - otherBody.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        Body.setVelocity(ballBody, {
+          x: (dx / dist) * BUMPER_FORCE,
+          y: (dy / dist) * BUMPER_FORCE
+        });
+        sndBumper();
+        addScore(POINTS.BUMPER, 'BUMPER');
+      }
     }
   });
 }
@@ -241,8 +322,9 @@ function createBall(x, y) {
 // ═══════════════════════════════════════════════════════════════
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') isLeftUp = true;
-  if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') isRightUp = true;
+  ensureAudio();
+  if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') { if (!isLeftUp) sndFlipper(); isLeftUp = true; }
+  if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') { if (!isRightUp) sndFlipper(); isRightUp = true; }
   if (e.key === ' ') {
     e.preventDefault();
     if (gameState === 'attract') startGame();
@@ -263,6 +345,7 @@ document.addEventListener('keyup', e => {
 // Touch: left half = left flipper, right half = right flipper
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  ensureAudio();
   if (gameState === 'attract') { startGame(); return; }
   if (gameState === 'launch') { plungerCharging = true; return; }
   for (const t of e.changedTouches) {
@@ -286,6 +369,10 @@ canvas.addEventListener('touchend', e => {
 function startGame() {
   gameState = 'launch';
   ballNum = 1;
+  if (score > highScore) highScore = score;
+  score = 0;
+  lastMessage = '';
+  messageTimer = 0;
   serveBall();
 }
 
@@ -303,6 +390,8 @@ function launchBall() {
   if (gameState !== 'launch') return;
   const power = Math.min(plungerPower, 1);
   Body.setVelocity(ball, { x: 0, y: -60 * power - 20 });
+  sndLaunch();
+  addScore(POINTS.LAUNCH, 'LAUNCH');
   gameState = 'play';
   plungerPower = 0;
   plungerCharging = false;
@@ -312,6 +401,7 @@ function drainBall() {
   if (gameState === 'drain') return;
   gameState = 'drain';
   drainTimer = 90;
+  sndDrain();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -386,6 +476,9 @@ function update() {
     }
   }
 
+  // Message timer
+  if (messageTimer > 0) messageTimer--;
+
   // Drain timer
   if (gameState === 'drain') {
     drainTimer--;
@@ -406,6 +499,28 @@ function render() {
 
   if (imageLoaded) {
     ctx.drawImage(tableImg, offX, offY, IMG_W * scale, IMG_H * scale);
+  }
+
+  // Bumpers
+  for (const b of bumperBodies) {
+    const bx = px(b.position.x), by = py(b.position.y);
+    const br = ps(BUMPER_RADIUS);
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(200, 16, 46, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = ps(3);
+    ctx.stroke();
+    // Inner circle
+    ctx.beginPath();
+    ctx.arc(bx, by, br * 0.55, 0, Math.PI * 2);
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    ctx.strokeStyle = '#C8102E';
+    ctx.lineWidth = ps(2);
+    ctx.stroke();
   }
 
   // Ball
@@ -458,6 +573,24 @@ function render() {
     ctx.font = `bold ${ps(26)}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.fillText('BALL ' + ballNum + '/' + totalBalls, px(75), py(55));
+    // Score
+    ctx.textAlign = 'right';
+    ctx.fillText(score.toLocaleString(), px(IMG_W - 75), py(55));
+    // High score
+    if (highScore > 0) {
+      ctx.font = `${ps(16)}px sans-serif`;
+      ctx.fillStyle = '#aaa';
+      ctx.fillText('HI ' + highScore.toLocaleString(), px(IMG_W - 75), py(85));
+    }
+  }
+
+  // Score popup message
+  if (messageTimer > 0 && gameState === 'play') {
+    const alpha = Math.min(1, messageTimer / 30);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.font = `bold ${ps(32)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(lastMessage, px(IMG_W / 2), py(IMG_H / 2 - 200));
   }
 
   // Attract mode
