@@ -43,6 +43,12 @@ const MAX_SPEED = 38;
 const DRAIN_VERTEX_A = 63;
 const DRAIN_VERTEX_B = 64;
 
+// ── COLLISION CATEGORIES ────────────────────────────────────
+const COL = {
+  BALL:      0x0001,
+  PLAYFIELD: 0x0002,
+};
+
 // ── MATTER.JS ───────────────────────────────────────────────
 const { Engine, World, Bodies, Body, Composite, Events } = Matter;
 
@@ -118,6 +124,7 @@ const POINTS = {
   BUMPER: 1000,
   SLINGSHOT: 500,
   LAUNCH: 100,
+  RAMP: 5000,
 };
 
 function addScore(pts, label) {
@@ -151,15 +158,17 @@ function ps(s) { return s * scale; }
 // WALL LOADING FROM JSON
 // ═══════════════════════════════════════════════════════════════
 
-function createWall(x1, y1, x2, y2, label) {
+function createWall(x1, y1, x2, y2, label, colCategory) {
   const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1) return;
   const ang = Math.atan2(dy, dx);
+  const cat = colCategory || COL.PLAYFIELD;
   const w = Bodies.rectangle(cx, cy, len, WALL_T, {
     isStatic: true, angle: ang, label: label || 'wall',
     friction: 0.3, restitution: 0.4,
+    collisionFilter: { category: cat, mask: COL.BALL },
   });
   World.add(world, w);
 }
@@ -172,6 +181,7 @@ function createBumper(x, y) {
   const b = Bodies.circle(x, y, BUMPER_RADIUS, {
     isStatic: true, label: 'bumper',
     friction: 0, restitution: 0.5,
+    collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
   });
   World.add(world, b);
   bumperBodies.push(b);
@@ -188,6 +198,7 @@ function createScoop(x, y) {
   // Sensor — detects contact but doesn't physically block the ball
   scoopBody = Bodies.circle(x, y, SCOOP_RADIUS, {
     isStatic: true, isSensor: true, label: 'scoop',
+    collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
   });
   World.add(world, scoopBody);
 }
@@ -202,6 +213,7 @@ function triggerMultiball() {
     const mb = Bodies.circle(scoopBody.position.x, scoopBody.position.y, BALL_RADIUS, {
       label: 'ball', restitution: 0.3, friction: 0.05,
       density: 0.0025, frictionAir: 0.001,
+      collisionFilter: { category: COL.BALL, mask: COL.PLAYFIELD },
     });
     const angle = -Math.PI / 2 + (i === 0 ? -0.6 : 0.6); // fan out left and right
     Body.setVelocity(mb, { x: Math.cos(angle) * 22, y: Math.sin(angle) * 22 });
@@ -219,10 +231,110 @@ function sndMultiball() {
   setTimeout(() => playTone(784, 0.15, 'square', 0.12), 200);
 }
 
+// ── RAMP (scripted path — ball is animated along bezier, not physics-guided) ──
+const RAMP = {
+  entrance: { x: 750, y: 1300 },
+  control:  { x: 800, y: 300 },
+  exit:     { x: 1150, y: 700 },
+  width: 180,
+  segments: 16,
+  duration: 90,
+  points: 5000,
+  minSpeed: 3,   // low threshold for testing
+};
+
+let rampAnimating = false;
+let rampT = 0;
+let rampBall = null;
+let rampRailPoints = [];
+
+function bezierPoint(t, p0, cp, p1) {
+  const a = 1 - t;
+  return {
+    x: a * a * p0.x + 2 * a * t * cp.x + t * t * p1.x,
+    y: a * a * p0.y + 2 * a * t * cp.y + t * t * p1.y,
+  };
+}
+
+function bezierNormal(t, p0, cp, p1) {
+  const tx = 2 * (1 - t) * (cp.x - p0.x) + 2 * t * (p1.x - cp.x);
+  const ty = 2 * (1 - t) * (cp.y - p0.y) + 2 * t * (p1.y - cp.y);
+  const len = Math.sqrt(tx * tx + ty * ty) || 1;
+  return { x: -ty / len, y: tx / len };
+}
+
+function createRamp() {
+  const { entrance, control, exit, width, segments } = RAMP;
+  const halfW = width / 2;
+  const leftRail = [];
+  const rightRail = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const pt = bezierPoint(t, entrance, control, exit);
+    const n = bezierNormal(t, entrance, control, exit);
+    leftRail.push({ x: pt.x + n.x * halfW, y: pt.y + n.y * halfW });
+    rightRail.push({ x: pt.x - n.x * halfW, y: pt.y - n.y * halfW });
+  }
+
+  rampRailPoints = { left: leftRail, right: rightRail };
+
+  // Entrance sensor only — no physics walls, no exit sensor
+  const eSensor = Bodies.circle(entrance.x, entrance.y, 60, {
+    isStatic: true, isSensor: true, label: 'ramp-entrance',
+    collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
+  });
+  World.add(world, eSensor);
+
+  console.log(`Ramp: scripted path, entrance (${entrance.x},${entrance.y}), exit (${exit.x},${exit.y})`);
+}
+
+function renderRamp() {
+  if (!rampRailPoints.left) return;
+  const { left, right } = rampRailPoints;
+  const active = rampAnimating;
+
+  // Ramp surface
+  ctx.beginPath();
+  ctx.moveTo(px(left[0].x), py(left[0].y));
+  for (let i = 1; i < left.length; i++) ctx.lineTo(px(left[i].x), py(left[i].y));
+  for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(px(right[i].x), py(right[i].y));
+  ctx.closePath();
+  ctx.fillStyle = active ? 'rgba(200, 16, 46, 0.25)' : 'rgba(200, 16, 46, 0.15)';
+  ctx.fill();
+
+  // Rails
+  ctx.strokeStyle = active ? 'rgba(255, 215, 0, 0.8)' : 'rgba(200, 200, 200, 0.6)';
+  ctx.lineWidth = ps(4);
+  ctx.beginPath();
+  ctx.moveTo(px(left[0].x), py(left[0].y));
+  for (let i = 1; i < left.length; i++) ctx.lineTo(px(left[i].x), py(left[i].y));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px(right[0].x), py(right[0].y));
+  for (let i = 1; i < right.length; i++) ctx.lineTo(px(right[i].x), py(right[i].y));
+  ctx.stroke();
+
+  // Entrance marker
+  ctx.beginPath();
+  ctx.arc(px(RAMP.entrance.x), py(RAMP.entrance.y), ps(15), 0, Math.PI * 2);
+  ctx.strokeStyle = !active ? 'rgba(0,255,0,0.5)' : 'rgba(100,100,100,0.3)';
+  ctx.lineWidth = ps(2);
+  ctx.stroke();
+
+  // Exit marker
+  ctx.beginPath();
+  ctx.arc(px(RAMP.exit.x), py(RAMP.exit.y), ps(15), 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,100,0,0.5)';
+  ctx.lineWidth = ps(2);
+  ctx.stroke();
+}
+
 function createCornerCircle(x, y) {
   const c = Bodies.circle(x, y, WALL_T / 2, {
     isStatic: true, label: 'corner',
     friction: 0.3, restitution: 0.4,
+    collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
   });
   World.add(world, c);
 }
@@ -291,6 +403,9 @@ async function loadWalls() {
   // Shield wall on right side of scoop — blocks launcher exit from dropping straight in
   createWall(850, 380, 880, 550, 'scoop-shield');
 
+  // ── RAMP (left side, curves up and across to right) ───────
+  createRamp();
+
   // Slingshot bounce: when ball hits a sling wall, fire it away
   const SLING_LEFT_CENTER = { x: 383, y: 1780 };
   const SLING_RIGHT_CENTER = { x: 1186, y: 1807 };
@@ -342,6 +457,18 @@ async function loadWalls() {
         sndBumper();
         addScore(POINTS.BUMPER, 'BUMPER');
       }
+
+      // Ramp entrance — remove ball from physics, start scripted animation
+      if (otherBody.label === 'ramp-entrance' && !rampAnimating) {
+        const spd = Math.sqrt(ballBody.velocity.x ** 2 + ballBody.velocity.y ** 2);
+        if (ballBody.velocity.y < -3 && spd > RAMP.minSpeed) {
+          rampAnimating = true;
+          rampT = 0;
+          rampBall = ballBody;
+          World.remove(world, ballBody);
+          sndSling();
+        }
+      }
     }
   });
 }
@@ -356,12 +483,14 @@ function createFlippers() {
   leftPaddle = Bodies.rectangle(
     LEFT_HINGE.x, LEFT_HINGE.y, PADDLE_LEN, PADDLE_WIDTH,
     { isStatic: true, label: 'left-flipper', chamfer: { radius: PADDLE_WIDTH / 2 },
-      friction: 0.8, restitution: 0.1 }
+      friction: 0.8, restitution: 0.1,
+      collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL } }
   );
   rightPaddle = Bodies.rectangle(
     RIGHT_HINGE.x, RIGHT_HINGE.y, PADDLE_LEN, PADDLE_WIDTH,
     { isStatic: true, label: 'right-flipper', chamfer: { radius: PADDLE_WIDTH / 2 },
-      friction: 0.8, restitution: 0.1 }
+      friction: 0.8, restitution: 0.1,
+      collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL } }
   );
   World.add(world, [leftPaddle, rightPaddle]);
 }
@@ -383,6 +512,7 @@ function createBall(x, y) {
   return Bodies.circle(x, y, BALL_RADIUS, {
     label: 'ball', restitution: 0.3, friction: 0.05,
     density: 0.0025, frictionAir: 0.001,
+    collisionFilter: { category: COL.BALL, mask: COL.PLAYFIELD },
   });
 }
 
@@ -450,6 +580,8 @@ function serveBall() {
   multiballs = [];
   isMultiball = false;
   scoopCooldown = 0;
+  rampAnimating = false;
+  rampBall = null;
 
   ball = createBall(BALL_START.x, BALL_START.y);
   Body.setVelocity(ball, { x: 0, y: 0 });
@@ -508,6 +640,26 @@ function update() {
 
   } // end flipper guard
 
+  // Ramp scripted animation — move ball along bezier path
+  if (rampAnimating && rampBall) {
+    rampT += 1 / RAMP.duration;
+    if (rampT >= 1) {
+      // Ramp complete — re-add ball to physics at exit point
+      rampT = 1;
+      rampAnimating = false;
+      Body.setPosition(rampBall, { x: RAMP.exit.x, y: RAMP.exit.y });
+      Body.setVelocity(rampBall, { x: 8, y: 12 });
+      World.add(world, rampBall);
+      rampBall = null;
+      addScore(RAMP.points, 'RAMP COMPLETE');
+      sndMultiball();
+    } else {
+      // Animate ball position along the bezier
+      const pt = bezierPoint(rampT, RAMP.entrance, RAMP.control, RAMP.exit);
+      Body.setPosition(rampBall, pt);
+    }
+  }
+
   // Speed clamp
   if (ball) {
     const v = ball.velocity;
@@ -518,8 +670,8 @@ function update() {
     }
   }
 
-  // Drain detection
-  if (ball && gameState === 'play') {
+  // Drain detection (skip while ball is on ramp — it's not in physics)
+  if (ball && gameState === 'play' && !rampAnimating) {
     if (ball.position.y > IMG_H + 100) {
       if (isMultiball && multiballs.length > 0) {
         // During multiball, losing the main ball isn't game over —
@@ -605,6 +757,9 @@ function render() {
   if (imageLoaded) {
     ctx.drawImage(tableImg, offX, offY, IMG_W * scale, IMG_H * scale);
   }
+
+  // Ramp rails (drawn before ball so ball appears on top)
+  renderRamp();
 
   // Scoop
   if (scoopBody) {
