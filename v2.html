@@ -26,6 +26,7 @@ const tableImg = new Image();
 tableImg.src = 'table-layer0.png';
 let imageLoaded = false;
 tableImg.onload = () => { imageLoaded = true; };
+
 const IMG_W = 1694, IMG_H = 2376;
 
 // ── CONSTANTS ───────────────────────────────────────────────
@@ -845,8 +846,8 @@ function render() {
 
   // Flippers
   if (leftPaddle) {
-    drawFlipper(leftPaddle, '#cc0000');
-    drawFlipper(rightPaddle, '#cc0000');
+    drawFlipper(leftPaddle, 1);   // left: red prominent on top in world space
+    drawFlipper(rightPaddle, -1); // right: flip asymmetry
   }
 
   // Plunger power bar
@@ -921,24 +922,163 @@ function render() {
   }
 }
 
-function drawFlipper(body, color) {
+function drawFlipper(body, side) {
+  // side: 1 = left, -1 = right. Flips all world-relative lighting.
   ctx.save();
   ctx.translate(px(body.position.x), py(body.position.y));
   ctx.rotate(body.angle);
+
   const w = ps(PADDLE_LEN), h = ps(PADDLE_WIDTH);
-  const r = h / 2;
-  ctx.beginPath();
-  ctx.moveTo(-w/2 + r, -h/2);
-  ctx.lineTo(w/2 - r, -h/2);
-  ctx.arc(w/2 - r, 0, r, -Math.PI/2, Math.PI/2);
-  ctx.lineTo(-w/2 + r, h/2);
-  ctx.arc(-w/2 + r, 0, r, Math.PI/2, -Math.PI/2);
-  ctx.closePath();
-  ctx.fillStyle = color;
+  const baseH = h * 1.8;
+  const tipH = h * 1.0;
+  const edgeW = ps(5);
+  const top = -side;
+
+  function taperPath(bH, tH, len) {
+    const bR = bH / 2, tR = tH / 2;
+    ctx.beginPath();
+    ctx.arc(-len/2 + bR, 0, bR, Math.PI/2, -Math.PI/2);
+    ctx.lineTo(len/2 - tR, -tR);
+    ctx.arc(len/2 - tR, 0, tR, -Math.PI/2, Math.PI/2);
+    ctx.lineTo(-len/2 + bR, bR);
+    ctx.closePath();
+  }
+
+  // 1. Drop shadow
+  ctx.save();
+  ctx.translate(ps(3) * side, ps(5) * side);
+  taperPath(baseH, tipH, w);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fill();
-  ctx.strokeStyle = '#800';
-  ctx.lineWidth = ps(2);
+  ctx.restore();
+
+  // 2. Red edge — beveled gradient + lengthwise variation
+  taperPath(baseH, tipH, w);
+  const redGrad = ctx.createLinearGradient(0, top * baseH/2, 0, -top * baseH/2);
+  redGrad.addColorStop(0, '#8C1822');
+  redGrad.addColorStop(0.35, '#6E1219');
+  redGrad.addColorStop(1, '#2E080E');
+  ctx.fillStyle = redGrad;
+  ctx.fill();
+
+  ctx.save();
+  taperPath(baseH, tipH, w);
+  ctx.clip();
+  const lenGrad = ctx.createLinearGradient(-w/2, 0, w/2, 0);
+  lenGrad.addColorStop(0, 'rgba(0,0,0,0.15)');
+  lenGrad.addColorStop(0.15, 'rgba(0,0,0,0.03)');
+  lenGrad.addColorStop(0.5, 'rgba(0,0,0,0)');
+  lenGrad.addColorStop(0.88, 'rgba(0,0,0,0.02)');
+  lenGrad.addColorStop(1, 'rgba(0,0,0,0.12)');
+  ctx.fillStyle = lenGrad;
+  ctx.fillRect(-w/2, -baseH/2, w, baseH);
+  const sheenGrad = ctx.createLinearGradient(0, top * baseH/2, 0, 0);
+  sheenGrad.addColorStop(0, 'rgba(255,255,255,0.16)');
+  sheenGrad.addColorStop(0.35, 'rgba(255,255,255,0.09)');
+  sheenGrad.addColorStop(0.7, 'rgba(255,255,255,0.03)');
+  sheenGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheenGrad;
+  ctx.fillRect(-w/2, -baseH/2, w, baseH);
+  ctx.restore();
+
+  // 3. Black body with soft shadow onto red bezel
+  const iBH = baseH - edgeW * 2, iTH = tipH - edgeW * 2;
+  const iW = w - edgeW * 2;
+
+  ctx.save();
+  ctx.translate(0, ps(2.5) * side);
+  ctx.beginPath();
+  ctx.rect(-w, -baseH, w * 2, baseH * 2);
+  taperPath(iBH, iTH, iW);
+  ctx.clip('evenodd');
+  ctx.shadowColor = 'rgba(0,0,0,0.75)';
+  ctx.shadowBlur = ps(10);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = top * ps(2);
+  taperPath(iBH, iTH, iW);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(0, ps(2.5) * side);
+  taperPath(iBH, iTH, iW);
+  const bodyGrad = ctx.createLinearGradient(0, top * iBH/2, 0, -top * iBH/2);
+  bodyGrad.addColorStop(0, '#252525');
+  bodyGrad.addColorStop(0.15, '#1a1a1a');
+  bodyGrad.addColorStop(0.5, '#0d0d0d');
+  bodyGrad.addColorStop(1, '#050505');
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // 4. Specular band
+  ctx.save();
+  ctx.translate(0, ps(2.5) * side);
+  taperPath(iBH * 0.65, iTH * 0.65, iW * 0.9);
+  ctx.translate(0, top * iBH * 0.12);
+  const specGrad = ctx.createLinearGradient(0, top * iBH * 0.2, 0, -top * iBH * 0.1);
+  specGrad.addColorStop(0, 'rgba(255,255,255,0.12)');
+  specGrad.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+  specGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = specGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // 5. Edge highlight
+  const hlSign = top;
+  ctx.beginPath();
+  ctx.moveTo(-iW/2 + iBH/2, hlSign * (iBH/2 - ps(2)) + ps(2.5) * side);
+  ctx.lineTo(iW/2 - iTH/2, hlSign * (iTH/2 - ps(2)) + ps(2.5) * side);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = ps(1);
   ctx.stroke();
+
+  // 6. Anchor bolt
+  const bodyOffY = ps(2.5) * side;
+  const hingeX = -w/2 + baseH/2;
+  const hingeY = bodyOffY;
+  const boltR = ps(9);
+  const hlO = ps(2.5);
+
+  ctx.beginPath();
+  ctx.arc(hingeX - ps(0.5) * top, hingeY - ps(0.5) * top, boltR + ps(1), 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(hingeX, hingeY, boltR + ps(0.5), 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fill();
+
+  const domeGrad = ctx.createRadialGradient(
+    hingeX + hlO * top, hingeY + hlO * top, 0,
+    hingeX, hingeY, boltR
+  );
+  domeGrad.addColorStop(0, '#f5f5f5');
+  domeGrad.addColorStop(0.08, '#e8e8e8');
+  domeGrad.addColorStop(0.2, '#d0d0d0');
+  domeGrad.addColorStop(0.35, '#b0b0b0');
+  domeGrad.addColorStop(0.5, '#8a8a8a');
+  domeGrad.addColorStop(0.7, '#666');
+  domeGrad.addColorStop(0.85, '#4a4a4a');
+  domeGrad.addColorStop(1, '#333');
+  ctx.beginPath();
+  ctx.arc(hingeX, hingeY, boltR, 0, Math.PI * 2);
+  ctx.fillStyle = domeGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = ps(0.8);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(
+    hingeX + hlO * top * 0.7,
+    hingeY + hlO * top * 0.7,
+    ps(1.8), 0, Math.PI * 2
+  );
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.fill();
+
   ctx.restore();
 }
 
