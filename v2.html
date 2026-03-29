@@ -113,6 +113,8 @@ let leftAngle = FLIP_REST, rightAngle = FLIP_REST;
 let ball;
 let drainTimer = 0;
 let stuckFrames = 0;
+let launcherGate = null;
+let launcherGateActive = false;
 const SLING_FRONT_DEBUG = new Set();
 
 // ── SCORING ─────────────────────────────────────────────────
@@ -126,6 +128,9 @@ const POINTS = {
   SLINGSHOT: 500,
   LAUNCH: 100,
   RAMP: 5000,
+  TARGET: 750,
+  ALL_TARGETS: 25000,
+  MULTIBALL: 10000,
 };
 
 function addScore(pts, label) {
@@ -204,26 +209,81 @@ function createScoop(x, y) {
   World.add(world, scoopBody);
 }
 
-function triggerMultiball() {
-  if (isMultiball || scoopCooldown > 0) return;
-  isMultiball = true;
-  scoopCooldown = 300; // 5 sec cooldown
+// Multiball sequence: catch ball → pause → announce → launch 3 from launcher
+let multiballPhase = 'idle'; // idle, caught, announcing, launching
+let multiballTimer = 0;
+let multiballLaunchCount = 0;
+let multiballCaughtBall = null; // stashed ball reference during catch sequence
 
-  // Spawn 2 extra balls from the scoop position, fired in different directions
-  for (let i = 0; i < 2; i++) {
-    const mb = Bodies.circle(scoopBody.position.x, scoopBody.position.y, BALL_RADIUS, {
-      label: 'ball', restitution: 0.3, friction: 0.05,
-      density: 0.0025, frictionAir: 0.001,
-      collisionFilter: { category: COL.BALL, mask: COL.PLAYFIELD },
-    });
-    const angle = -Math.PI / 2 + (i === 0 ? -0.6 : 0.6); // fan out left and right
-    Body.setVelocity(mb, { x: Math.cos(angle) * 22, y: Math.sin(angle) * 22 });
-    World.add(world, mb);
-    multiballs.push(mb);
+function triggerMultiball() {
+  if (isMultiball || scoopCooldown > 0 || multiballPhase !== 'idle') return;
+
+  // Phase 1: Catch the ball — remove from physics
+  multiballPhase = 'caught';
+  multiballTimer = 60; // 1 sec pause
+  multiballCaughtBall = ball; // stash reference for re-add later
+  World.remove(world, ball);
+  ball = null; // prevent speed clamp / sweep from operating on phantom body
+  sndMultiball();
+}
+
+function updateMultiballSequence() {
+  if (multiballPhase === 'idle') return;
+
+  // Countdown for caught/announcing, count UP handled separately in launching
+  if (multiballPhase !== 'launching') multiballTimer--;
+
+  if (multiballPhase === 'caught' && multiballTimer <= 0) {
+    // Phase 2: Announce
+    multiballPhase = 'announcing';
+    multiballTimer = 90; // 1.5 sec announcement
+    addScore(POINTS.MULTIBALL, 'MULTIBALL!');
   }
 
-  sndMultiball();
-  addScore(10000, 'MULTIBALL!');
+  if (multiballPhase === 'announcing' && multiballTimer <= 0) {
+    // Phase 3: Eject all balls from the scoop area
+    multiballPhase = 'launching';
+    multiballLaunchCount = 0;
+    multiballTimer = 0;
+    isMultiball = true;
+    scoopCooldown = 300;
+
+    // Eject the original ball from the scoop back onto the playfield
+    const scoopX = scoopBody.position.x;
+    const scoopY = scoopBody.position.y;
+    ball = multiballCaughtBall;
+    multiballCaughtBall = null;
+    Body.setPosition(ball, { x: scoopX, y: scoopY });
+    Body.setVelocity(ball, { x: 12, y: -18 });
+    World.add(world, ball);
+    sndLaunch();
+  }
+
+  if (multiballPhase === 'launching') {
+    multiballTimer++;
+    // Stagger-launch 3 extra balls from the scoop, one every 25 frames
+    if (multiballTimer % 25 === 0 && multiballLaunchCount < 3) {
+      const scoopX = scoopBody.position.x;
+      const scoopY = scoopBody.position.y;
+      const mb = Bodies.circle(scoopX, scoopY, BALL_RADIUS, {
+        label: 'ball', restitution: 0.3, friction: 0.05,
+        density: 0.0025, frictionAir: 0.001,
+        collisionFilter: { category: COL.BALL, mask: COL.PLAYFIELD },
+      });
+      // Fan out in different directions from the scoop
+      const angles = [-0.3, 0.4, 1.0];
+      const a = angles[multiballLaunchCount];
+      Body.setVelocity(mb, { x: Math.cos(a) * 20, y: -Math.abs(Math.sin(a)) * 20 });
+      World.add(world, mb);
+      multiballs.push(mb);
+      multiballLaunchCount++;
+      sndLaunch();
+
+      if (multiballLaunchCount >= 3) {
+        multiballPhase = 'idle';
+      }
+    }
+  }
 }
 
 function sndMultiball() {
@@ -232,16 +292,113 @@ function sndMultiball() {
   setTimeout(() => playTone(784, 0.15, 'square', 0.12), 200);
 }
 
-// ── RAMP (scripted path — ball is animated along bezier, not physics-guided) ──
+function sndTarget() {
+  playTone(440, 0.06, 'square', 0.08);
+  playTone(880, 0.04, 'sine', 0.05);
+}
+
+function sndAllTargets() {
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => playTone(523 + i * 100, 0.1, 'square', 0.1), i * 80);
+  }
+}
+
+// ── DROP TARGETS ────────────────────────────────────────────
+const targetBodies = [];
+const targetStates = []; // true = up (hittable), false = down
+let allTargetsTimer = 0; // reset timer after all knocked down
+
+function createTarget(x, y, angle, index) {
+  const w = 50, h = 18;
+  const b = Bodies.rectangle(x, y, w, h, {
+    isStatic: true, angle: angle, label: 'target-' + index,
+    friction: 0.3, restitution: 0.5,
+    collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
+  });
+  World.add(world, b);
+  targetBodies.push(b);
+  targetStates.push(true); // starts up
+}
+
+function hitTarget(index, ballBody) {
+  if (!targetStates[index]) return; // already down
+
+  // Direction check: T0-T2 (left wall) must be hit from right, T3-T5 from left
+  // Skip check for very slow balls — treat any contact as valid
+  const vx = ballBody.velocity.x;
+  if (Math.abs(vx) > 0.5) {
+    if (index < 3 && vx < 0) return; // ball moving left, can't hit left-wall target from right
+    if (index >= 3 && vx > 0) return; // ball moving right, can't hit right-wall target from left
+  }
+
+  targetStates[index] = false;
+  sndTarget();
+  addScore(POINTS.TARGET, 'TARGET');
+
+  // Remove from physics (target drops)
+  World.remove(world, targetBodies[index]);
+
+  // Check if all targets are down
+  if (targetStates.every(s => !s)) {
+    addScore(POINTS.ALL_TARGETS, 'ALL TARGETS!');
+    sndAllTargets();
+    allTargetsTimer = 180; // 3 sec then reset
+  }
+}
+
+function resetTargets() {
+  for (let i = 0; i < targetBodies.length; i++) {
+    if (!targetStates[i]) {
+      targetStates[i] = true;
+      World.add(world, targetBodies[i]);
+    }
+  }
+}
+
+function renderTargets() {
+  for (let i = 0; i < targetBodies.length; i++) {
+    if (!targetStates[i]) continue; // don't draw downed targets
+    const b = targetBodies[i];
+    const bx = px(b.position.x), by = py(b.position.y);
+
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(b.angle);
+
+    const w = ps(50), h = ps(18);
+    // Target plate
+    ctx.fillStyle = 'rgba(232, 160, 32, 0.85)';
+    ctx.fillRect(-w/2, -h/2, w, h);
+    ctx.strokeStyle = '#e8a020';
+    ctx.lineWidth = ps(2);
+    ctx.strokeRect(-w/2, -h/2, w, h);
+
+    // Hit face (red edge)
+    const hitFromLeft = i >= 3;
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = ps(3);
+    const faceY = hitFromLeft ? h/2 : -h/2;
+    ctx.beginPath();
+    ctx.moveTo(-w/2, faceY);
+    ctx.lineTo(w/2, faceY);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+// ── RAMP (scripted cubic bezier — ball animated along path) ──
 const RAMP = {
-  entrance: { x: 750, y: 1300 },
-  control:  { x: 800, y: 300 },
-  exit:     { x: 1150, y: 700 },
-  width: 180,
-  segments: 16,
+  entrance: { x: 1156, y: 1009 },
+  cp1:      { x: 1996, y: 55 },
+  cp2:      { x: 350, y: -63 },
+  exit:     { x: 667, y: 461 },
+  widthEntrance: 140,  // wide funnel at mouth
+  widthChannel: 70,    // narrows to this
+  taperEnd: 0.25,      // funnel over first 25% of curve
+  segments: 24,
   duration: 90,
-  points: 5000,
-  minSpeed: 3,   // low threshold for testing
+  minSpeed: 3,
 };
 
 let rampAnimating = false;
@@ -249,45 +406,48 @@ let rampT = 0;
 let rampBall = null;
 let rampRailPoints = [];
 
-function bezierPoint(t, p0, cp, p1) {
+function cubicPoint(t, p0, p1, p2, p3) {
   const a = 1 - t;
   return {
-    x: a * a * p0.x + 2 * a * t * cp.x + t * t * p1.x,
-    y: a * a * p0.y + 2 * a * t * cp.y + t * t * p1.y,
+    x: a*a*a*p0.x + 3*a*a*t*p1.x + 3*a*t*t*p2.x + t*t*t*p3.x,
+    y: a*a*a*p0.y + 3*a*a*t*p1.y + 3*a*t*t*p2.y + t*t*t*p3.y,
   };
 }
 
-function bezierNormal(t, p0, cp, p1) {
-  const tx = 2 * (1 - t) * (cp.x - p0.x) + 2 * t * (p1.x - cp.x);
-  const ty = 2 * (1 - t) * (cp.y - p0.y) + 2 * t * (p1.y - cp.y);
-  const len = Math.sqrt(tx * tx + ty * ty) || 1;
-  return { x: -ty / len, y: tx / len };
+function cubicTangent(t, p0, p1, p2, p3) {
+  const a = 1 - t;
+  return {
+    x: 3*a*a*(p1.x-p0.x) + 6*a*t*(p2.x-p1.x) + 3*t*t*(p3.x-p2.x),
+    y: 3*a*a*(p1.y-p0.y) + 6*a*t*(p2.y-p1.y) + 3*t*t*(p3.y-p2.y),
+  };
 }
 
 function createRamp() {
-  const { entrance, control, exit, width, segments } = RAMP;
-  const halfW = width / 2;
+  const { entrance, cp1, cp2, exit, widthEntrance, widthChannel, taperEnd, segments } = RAMP;
   const leftRail = [];
   const rightRail = [];
 
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
-    const pt = bezierPoint(t, entrance, control, exit);
-    const n = bezierNormal(t, entrance, control, exit);
-    leftRail.push({ x: pt.x + n.x * halfW, y: pt.y + n.y * halfW });
-    rightRail.push({ x: pt.x - n.x * halfW, y: pt.y - n.y * halfW });
+    const pt = cubicPoint(t, entrance, cp1, cp2, exit);
+    const tg = cubicTangent(t, entrance, cp1, cp2, exit);
+    const len = Math.sqrt(tg.x * tg.x + tg.y * tg.y) || 1;
+    const nx = -tg.y / len, ny = tg.x / len;
+    // Tapered width: wide at entrance, narrows to channel
+    const taperT = Math.min(t / taperEnd, 1);
+    const halfW = (widthEntrance + (widthChannel - widthEntrance) * taperT) / 2;
+    leftRail.push({ x: pt.x + nx * halfW, y: pt.y + ny * halfW });
+    rightRail.push({ x: pt.x - nx * halfW, y: pt.y - ny * halfW });
   }
 
   rampRailPoints = { left: leftRail, right: rightRail };
 
-  // Entrance sensor only — no physics walls, no exit sensor
-  const eSensor = Bodies.circle(entrance.x, entrance.y, 60, {
+  // Entrance sensor — wider to match funnel
+  const eSensor = Bodies.circle(entrance.x, entrance.y, 80, {
     isStatic: true, isSensor: true, label: 'ramp-entrance',
     collisionFilter: { category: COL.PLAYFIELD, mask: COL.BALL },
   });
   World.add(world, eSensor);
-
-  console.log(`Ramp: scripted path, entrance (${entrance.x},${entrance.y}), exit (${exit.x},${exit.y})`);
 }
 
 function renderRamp() {
@@ -301,12 +461,12 @@ function renderRamp() {
   for (let i = 1; i < left.length; i++) ctx.lineTo(px(left[i].x), py(left[i].y));
   for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(px(right[i].x), py(right[i].y));
   ctx.closePath();
-  ctx.fillStyle = active ? 'rgba(200, 16, 46, 0.25)' : 'rgba(200, 16, 46, 0.15)';
+  ctx.fillStyle = active ? 'rgba(200, 16, 46, 0.25)' : 'rgba(200, 16, 46, 0.12)';
   ctx.fill();
 
   // Rails
-  ctx.strokeStyle = active ? 'rgba(255, 215, 0, 0.8)' : 'rgba(200, 200, 200, 0.6)';
-  ctx.lineWidth = ps(4);
+  ctx.strokeStyle = active ? 'rgba(255, 215, 0, 0.8)' : 'rgba(200, 200, 200, 0.5)';
+  ctx.lineWidth = ps(3);
   ctx.beginPath();
   ctx.moveTo(px(left[0].x), py(left[0].y));
   for (let i = 1; i < left.length; i++) ctx.lineTo(px(left[i].x), py(left[i].y));
@@ -314,20 +474,6 @@ function renderRamp() {
   ctx.beginPath();
   ctx.moveTo(px(right[0].x), py(right[0].y));
   for (let i = 1; i < right.length; i++) ctx.lineTo(px(right[i].x), py(right[i].y));
-  ctx.stroke();
-
-  // Entrance marker
-  ctx.beginPath();
-  ctx.arc(px(RAMP.entrance.x), py(RAMP.entrance.y), ps(15), 0, Math.PI * 2);
-  ctx.strokeStyle = !active ? 'rgba(0,255,0,0.5)' : 'rgba(100,100,100,0.3)';
-  ctx.lineWidth = ps(2);
-  ctx.stroke();
-
-  // Exit marker
-  ctx.beginPath();
-  ctx.arc(px(RAMP.exit.x), py(RAMP.exit.y), ps(15), 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255,100,0,0.5)';
-  ctx.lineWidth = ps(2);
   ctx.stroke();
 }
 
@@ -392,17 +538,31 @@ async function loadWalls() {
   // Create flippers after positions are loaded
   createFlippers();
 
-  // Bumpers — three circular pop bumpers in triangle formation
-  // Positioned in the upper-mid playfield around the logo area
-  createBumper(650, 750);   // upper left
-  createBumper(950, 750);   // upper right
-  createBumper(800, 1000);  // lower center
+  // Bumpers — from element editor
+  createBumper(640, 616);   // B1
+  createBumper(967, 621);   // B2
+  createBumper(798, 778);   // B3
+  createBumper(799, 397);   // B4
 
-  // Scoop — sensor zone that triggers multiball
-  // Upper-center, above the bumpers. Ball must approach from the left/below.
-  createScoop(800, 480);
-  // Shield wall on right side of scoop — blocks launcher exit from dropping straight in
-  createWall(850, 380, 880, 550, 'scoop-shield');
+  // Scoop — multiball trigger, upper-left area
+  createScoop(304, 453);
+
+  // Drop targets — T1-T3 left wall (hit from right), T4-T6 right wall (hit from left)
+  createTarget(262, 1043, 1.571, 0);
+  createTarget(263, 1158, 1.571, 1);
+  createTarget(264, 1281, 1.571, 2);
+  createTarget(1315, 1171, 1.571, 3);
+  createTarget(1316, 1290, 1.571, 4);
+  createTarget(1317, 1396, 1.571, 5);
+
+  // ── ONE-WAY GATE at top of launcher channel ───────
+  // Prevents ball from falling back into the launcher after exiting
+  launcherGate = Bodies.rectangle(1420, 310, 120, WALL_T, {
+    isStatic: true, label: 'launcher-gate', angle: -0.5, // angled down-left to deflect ball into playfield
+    friction: 0.1, restitution: 0.5,
+    collisionFilter: { category: 0, mask: 0 }, // starts disabled
+  });
+  World.add(world, launcherGate);
 
   // ── RAMP (left side, curves up and across to right) ───────
   createRamp();
@@ -441,9 +601,15 @@ async function loadWalls() {
         addScore(POINTS.SLINGSHOT, 'SLINGSHOT');
       }
 
-      // Scoop hit — trigger multiball
-      if (otherBody.label === 'scoop') {
+      // Scoop hit — trigger multiball (only main ball)
+      if (otherBody.label === 'scoop' && ballBody === ball) {
         triggerMultiball();
+      }
+
+      // Drop target hit
+      if (otherBody.label.startsWith('target-')) {
+        const idx = parseInt(otherBody.label.split('-')[1]);
+        hitTarget(idx, ballBody);
       }
 
       // Bumper hit — pop the ball away from bumper center
@@ -459,8 +625,8 @@ async function loadWalls() {
         addScore(POINTS.BUMPER, 'BUMPER');
       }
 
-      // Ramp entrance — remove ball from physics, start scripted animation
-      if (otherBody.label === 'ramp-entrance' && !rampAnimating) {
+      // Ramp entrance — only main ball, not during multiball
+      if (otherBody.label === 'ramp-entrance' && !rampAnimating && ballBody === ball && multiballPhase === 'idle' && !isMultiball) {
         const spd = Math.sqrt(ballBody.velocity.x ** 2 + ballBody.velocity.y ** 2);
         if (ballBody.velocity.y < -3 && spd > RAMP.minSpeed) {
           rampAnimating = true;
@@ -503,6 +669,79 @@ function positionFlipper(body, hinge, angle) {
     x: hinge.x + Math.cos(angle) * halfLen,
     y: hinge.y + Math.sin(angle) * halfLen
   }, true);
+}
+
+// ── FLIPPER ANTI-TUNNELING ─────────────────────────────
+// Subdivide flipper arc into substeps, check for ball collision at each.
+// Prevents ball phasing through a fast-moving flipper.
+const FLIPPER_SUBSTEPS = 6;
+
+function flipperHitsBall(hinge, angle, ballPos) {
+  // Point-to-line-segment distance: flipper centerline vs ball center
+  const ax = hinge.x, ay = hinge.y;
+  const bx = hinge.x + Math.cos(angle) * PADDLE_LEN;
+  const by = hinge.y + Math.sin(angle) * PADDLE_LEN;
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = ((ballPos.x - ax) * dx + (ballPos.y - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  const dist = Math.hypot(ballPos.x - cx, ballPos.y - cy);
+  return dist < BALL_RADIUS + PADDLE_WIDTH / 2 + 2;
+}
+
+function sweepFlipper(body, hinge, fromAngle, toAngle) {
+  // Exclude ramp-animating ball and null refs
+  const allBalls = (rampAnimating ? [] : (ball ? [ball] : [])).concat(multiballs).filter(Boolean);
+  if (allBalls.length === 0) {
+    positionFlipper(body, hinge, toAngle);
+    return;
+  }
+
+  for (let i = 0; i <= FLIPPER_SUBSTEPS; i++) {
+    const frac = i / FLIPPER_SUBSTEPS;
+    const angle = fromAngle + (toAngle - fromAngle) * frac;
+    positionFlipper(body, hinge, angle);
+
+    for (const b of allBalls) {
+      if (flipperHitsBall(hinge, angle, b.position)) {
+        // Tangential impulse from flipper's angular velocity at contact point
+        const dx = b.position.x - hinge.x;
+        const dy = b.position.y - hinge.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const angularVel = toAngle - fromAngle;
+        const tangentialSpeed = Math.abs(angularVel) * dist;
+
+        // Tangent direction (perpendicular to radius from hinge)
+        const nx = -dy / dist, ny = dx / dist;
+        const sign = angularVel < 0 ? 1 : -1;
+        const impulseScale = 0.55;
+
+        Body.setVelocity(b, {
+          x: b.velocity.x + nx * tangentialSpeed * sign * impulseScale,
+          y: b.velocity.y + ny * tangentialSpeed * sign * impulseScale
+        });
+
+        // Push ball clear — use nearest point on flipper centerline, not body center
+        const ax = hinge.x, ay = hinge.y;
+        const bx = hinge.x + Math.cos(angle) * PADDLE_LEN;
+        const by = hinge.y + Math.sin(angle) * PADDLE_LEN;
+        const fdx = bx - ax, fdy = by - ay;
+        const flen2 = fdx * fdx + fdy * fdy;
+        let ft = ((b.position.x - ax) * fdx + (b.position.y - ay) * fdy) / flen2;
+        ft = Math.max(0, Math.min(1, ft));
+        const nearX = ax + ft * fdx, nearY = ay + ft * fdy;
+        const pdx = b.position.x - nearX, pdy = b.position.y - nearY;
+        const pDist = Math.sqrt(pdx * pdx + pdy * pdy) || 1;
+        const clearance = BALL_RADIUS + PADDLE_WIDTH / 2 + 4;
+        Body.setPosition(b, {
+          x: nearX + (pdx / pDist) * clearance,
+          y: nearY + (pdy / pDist) * clearance
+        });
+        break;
+      }
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -583,6 +822,19 @@ function serveBall() {
   scoopCooldown = 0;
   rampAnimating = false;
   rampBall = null;
+  stuckFrames = 0;
+  multiballPhase = 'idle';
+  multiballTimer = 0;
+  multiballCaughtBall = null;
+  allTargetsTimer = 0;
+  resetTargets();
+
+  // Disable launcher gate so ball can be placed in channel
+  if (launcherGate) {
+    launcherGate.collisionFilter.category = 0;
+    launcherGate.collisionFilter.mask = 0;
+    launcherGateActive = false;
+  }
 
   ball = createBall(BALL_START.x, BALL_START.y);
   Body.setVelocity(ball, { x: 0, y: 0 });
@@ -630,34 +882,65 @@ function update() {
   const lSpd = isLeftUp ? FLIP_UP_SPEED : FLIP_DN_SPEED;
   const rSpd = isRightUp ? FLIP_UP_SPEED : FLIP_DN_SPEED;
 
+  // Save previous angles for sweep
+  const prevLeftAngle = leftAngle;
+  const prevRightAngle = rightAngle;
+
   if (leftAngle < lTarget) leftAngle = Math.min(leftAngle + lSpd, lTarget);
   else if (leftAngle > lTarget) leftAngle = Math.max(leftAngle - lSpd, lTarget);
 
   if (rightAngle < rTarget) rightAngle = Math.min(rightAngle + rSpd, rTarget);
   else if (rightAngle > rTarget) rightAngle = Math.max(rightAngle - rSpd, rTarget);
 
-  positionFlipper(leftPaddle, LEFT_HINGE, leftAngle);
-  positionFlipper(rightPaddle, RIGHT_HINGE, Math.PI - rightAngle);
+  // Use sweep when flipper is actively moving, simple position when stationary
+  if (leftAngle !== prevLeftAngle) {
+    sweepFlipper(leftPaddle, LEFT_HINGE, prevLeftAngle, leftAngle);
+  } else {
+    positionFlipper(leftPaddle, LEFT_HINGE, leftAngle);
+  }
+
+  if (rightAngle !== prevRightAngle) {
+    sweepFlipper(rightPaddle, RIGHT_HINGE, Math.PI - prevRightAngle, Math.PI - rightAngle);
+  } else {
+    positionFlipper(rightPaddle, RIGHT_HINGE, Math.PI - rightAngle);
+  }
 
   } // end flipper guard
 
-  // Ramp scripted animation — move ball along bezier path
+  // Ramp scripted animation — move ball along cubic bezier path
   if (rampAnimating && rampBall) {
     rampT += 1 / RAMP.duration;
     if (rampT >= 1) {
-      // Ramp complete — re-add ball to physics at exit point
       rampT = 1;
       rampAnimating = false;
       Body.setPosition(rampBall, { x: RAMP.exit.x, y: RAMP.exit.y });
-      Body.setVelocity(rampBall, { x: 8, y: 12 });
+      Body.setVelocity(rampBall, { x: -8, y: 10 });
       World.add(world, rampBall);
+      ball = rampBall;
       rampBall = null;
-      addScore(RAMP.points, 'RAMP COMPLETE');
+      addScore(POINTS.RAMP, 'RAMP COMPLETE');
       sndMultiball();
     } else {
-      // Animate ball position along the bezier
-      const pt = bezierPoint(rampT, RAMP.entrance, RAMP.control, RAMP.exit);
+      const pt = cubicPoint(rampT, RAMP.entrance, RAMP.cp1, RAMP.cp2, RAMP.exit);
       Body.setPosition(rampBall, pt);
+    }
+  }
+
+  // Multiball sequence
+  updateMultiballSequence();
+
+  // Drop target reset timer
+  if (allTargetsTimer > 0) {
+    allTargetsTimer--;
+    if (allTargetsTimer <= 0) resetTargets();
+  }
+
+  // One-way launcher gate — enable when ball exits upward past gate position
+  if (ball && launcherGate && !launcherGateActive) {
+    if (ball.position.y < 200 && ball.velocity.y < 0 && gameState === 'play') {
+      launcherGate.collisionFilter.category = COL.PLAYFIELD;
+      launcherGate.collisionFilter.mask = COL.BALL;
+      launcherGateActive = true;
     }
   }
 
@@ -671,8 +954,9 @@ function update() {
     }
   }
 
-  // Drain detection (skip while ball is on ramp — it's not in physics)
-  if (ball && gameState === 'play' && !rampAnimating) {
+  // Drain detection (skip while ball is on ramp or caught in scoop, but allow during launching)
+  if (ball && gameState === 'play' && !rampAnimating &&
+      multiballPhase !== 'caught' && multiballPhase !== 'announcing') {
     if (ball.position.y > IMG_H + 100) {
       if (isMultiball && multiballs.length > 0) {
         // During multiball, losing the main ball isn't game over —
@@ -762,6 +1046,9 @@ function render() {
   // Ramp rails (drawn before ball so ball appears on top)
   renderRamp();
 
+  // Drop targets
+  renderTargets();
+
   // Scoop
   if (scoopBody) {
     const sx = px(scoopBody.position.x), sy = py(scoopBody.position.y);
@@ -810,7 +1097,7 @@ function render() {
   }
 
   // Ball
-  if (ball && gameState !== 'attract') {
+  if (ball && gameState !== 'attract' && multiballPhase !== 'caught' && multiballPhase !== 'announcing') {
     const bx = px(ball.position.x), by = py(ball.position.y);
     const br = ps(BALL_RADIUS);
     ctx.beginPath();
@@ -888,12 +1175,25 @@ function render() {
   }
 
   // Score popup message
-  if (messageTimer > 0 && gameState === 'play') {
+  if (messageTimer > 0 && (gameState === 'play' || multiballPhase !== 'idle')) {
     const alpha = Math.min(1, messageTimer / 30);
     ctx.fillStyle = `rgba(255,255,255,${alpha})`;
     ctx.font = `bold ${ps(32)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillText(lastMessage, px(IMG_W / 2), py(IMG_H / 2 - 200));
+  }
+
+  // Multiball announcement overlay
+  if (multiballPhase === 'caught' || multiballPhase === 'announcing') {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${ps(52)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('MULTIBALL!', px(IMG_W / 2), py(IMG_H / 2 - 20));
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${ps(24)}px sans-serif`;
+    ctx.fillText(multiballPhase === 'caught' ? 'GET READY...' : POINTS.MULTIBALL.toLocaleString() + ' POINTS', px(IMG_W / 2), py(IMG_H / 2 + 30));
   }
 
   // Attract mode
