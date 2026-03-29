@@ -34,8 +34,8 @@ const PADDLE_LEN = 260;
 const PADDLE_WIDTH = 30;
 const FLIP_REST = 0.5;
 const FLIP_ACTIVE = -0.5;
-const FLIP_UP_SPEED = 0.20;
-const FLIP_DN_SPEED = 0.08;
+const FLIP_UP_SPEED = 0.35;
+const FLIP_DN_SPEED = 0.12;
 const WALL_T = 8;
 const MAX_SPEED = 38;
 
@@ -54,15 +54,31 @@ const world = engine.world;
 
 // ── AUDIO ───────────────────────────────────────────────────
 let audioCtx;
-function ensureAudio() {
-  if (!audioCtx) {
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+let audioReady = false;
+
+function initAudio() {
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().then(() => { audioReady = true; });
+    }
+    return;
   }
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioReady = audioCtx.state === 'running';
+    if (!audioReady) {
+      audioCtx.resume().then(() => { audioReady = true; });
+    }
+  } catch(e) {}
 }
 
+// Safari requires audio init from multiple gesture types
+document.addEventListener('click', initAudio, { once: false });
+document.addEventListener('keydown', initAudio, { once: false });
+document.addEventListener('touchstart', initAudio, { once: false });
+
 function playTone(freq, dur, type, vol) {
-  if (!audioCtx) return;
+  if (!audioCtx || !audioReady) return;
   try {
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
@@ -161,6 +177,48 @@ function createBumper(x, y) {
   bumperBodies.push(b);
 }
 
+// ── SCOOP (multiball trigger) ────────────────────────────────
+const SCOOP_RADIUS = 35;
+let scoopBody = null;
+let multiballs = [];       // extra ball bodies during multiball
+let isMultiball = false;
+let scoopCooldown = 0;     // prevent re-triggering immediately
+
+function createScoop(x, y) {
+  // Sensor — detects contact but doesn't physically block the ball
+  scoopBody = Bodies.circle(x, y, SCOOP_RADIUS, {
+    isStatic: true, isSensor: true, label: 'scoop',
+  });
+  World.add(world, scoopBody);
+}
+
+function triggerMultiball() {
+  if (isMultiball || scoopCooldown > 0) return;
+  isMultiball = true;
+  scoopCooldown = 300; // 5 sec cooldown
+
+  // Spawn 2 extra balls from the scoop position, fired in different directions
+  for (let i = 0; i < 2; i++) {
+    const mb = Bodies.circle(scoopBody.position.x, scoopBody.position.y, BALL_RADIUS, {
+      label: 'ball', restitution: 0.3, friction: 0.05,
+      density: 0.0025, frictionAir: 0.001,
+    });
+    const angle = -Math.PI / 2 + (i === 0 ? -0.6 : 0.6); // fan out left and right
+    Body.setVelocity(mb, { x: Math.cos(angle) * 22, y: Math.sin(angle) * 22 });
+    World.add(world, mb);
+    multiballs.push(mb);
+  }
+
+  sndMultiball();
+  addScore(10000, 'MULTIBALL!');
+}
+
+function sndMultiball() {
+  playTone(523, 0.1, 'square', 0.12);
+  setTimeout(() => playTone(659, 0.1, 'square', 0.1), 100);
+  setTimeout(() => playTone(784, 0.15, 'square', 0.12), 200);
+}
+
 function createCornerCircle(x, y) {
   const c = Bodies.circle(x, y, WALL_T / 2, {
     isStatic: true, label: 'corner',
@@ -227,6 +285,12 @@ async function loadWalls() {
   createBumper(950, 750);   // upper right
   createBumper(800, 1000);  // lower center
 
+  // Scoop — sensor zone that triggers multiball
+  // Upper-center, above the bumpers. Ball must approach from the left/below.
+  createScoop(800, 480);
+  // Shield wall on right side of scoop — blocks launcher exit from dropping straight in
+  createWall(850, 380, 880, 550, 'scoop-shield');
+
   // Slingshot bounce: when ball hits a sling wall, fire it away
   const SLING_LEFT_CENTER = { x: 383, y: 1780 };
   const SLING_RIGHT_CENTER = { x: 1186, y: 1807 };
@@ -259,6 +323,11 @@ async function loadWalls() {
         });
         sndSling();
         addScore(POINTS.SLINGSHOT, 'SLINGSHOT');
+      }
+
+      // Scoop hit — trigger multiball
+      if (otherBody.label === 'scoop') {
+        triggerMultiball();
       }
 
       // Bumper hit — pop the ball away from bumper center
@@ -322,7 +391,6 @@ function createBall(x, y) {
 // ═══════════════════════════════════════════════════════════════
 
 document.addEventListener('keydown', e => {
-  ensureAudio();
   if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') { if (!isLeftUp) sndFlipper(); isLeftUp = true; }
   if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') { if (!isRightUp) sndFlipper(); isRightUp = true; }
   if (e.key === ' ') {
@@ -345,7 +413,6 @@ document.addEventListener('keyup', e => {
 // Touch: left half = left flipper, right half = right flipper
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  ensureAudio();
   if (gameState === 'attract') { startGame(); return; }
   if (gameState === 'launch') { plungerCharging = true; return; }
   for (const t of e.changedTouches) {
@@ -378,6 +445,12 @@ function startGame() {
 
 function serveBall() {
   if (ball) World.remove(world, ball);
+  // Clean up any leftover multiball extras
+  for (const mb of multiballs) World.remove(world, mb);
+  multiballs = [];
+  isMultiball = false;
+  scoopCooldown = 0;
+
   ball = createBall(BALL_START.x, BALL_START.y);
   Body.setVelocity(ball, { x: 0, y: 0 });
   World.add(world, ball);
@@ -448,7 +521,14 @@ function update() {
   // Drain detection
   if (ball && gameState === 'play') {
     if (ball.position.y > IMG_H + 100) {
-      drainBall();
+      if (isMultiball && multiballs.length > 0) {
+        // During multiball, losing the main ball isn't game over —
+        // promote an extra ball to main ball and keep playing
+        World.remove(world, ball);
+        ball = multiballs.pop();
+      } else {
+        drainBall();
+      }
     }
 
     // Launcher re-entry: if ball rolls back into the launcher channel,
@@ -476,6 +556,31 @@ function update() {
     }
   }
 
+  // Multiball management — remove drained extra balls
+  if (multiballs.length > 0) {
+    for (let i = multiballs.length - 1; i >= 0; i--) {
+      const mb = multiballs[i];
+      if (mb.position.y > IMG_H + 100) {
+        World.remove(world, mb);
+        multiballs.splice(i, 1);
+        continue;
+      }
+      // Speed clamp extra balls too
+      const v = mb.velocity;
+      const spd = Math.sqrt(v.x * v.x + v.y * v.y);
+      if (spd > MAX_SPEED) {
+        const f = MAX_SPEED / spd;
+        Body.setVelocity(mb, { x: v.x * f, y: v.y * f });
+      }
+    }
+    if (multiballs.length === 0) {
+      isMultiball = false;
+    }
+  }
+
+  // Scoop cooldown
+  if (scoopCooldown > 0) scoopCooldown--;
+
   // Message timer
   if (messageTimer > 0) messageTimer--;
 
@@ -499,6 +604,31 @@ function render() {
 
   if (imageLoaded) {
     ctx.drawImage(tableImg, offX, offY, IMG_W * scale, IMG_H * scale);
+  }
+
+  // Scoop
+  if (scoopBody) {
+    const sx = px(scoopBody.position.x), sy = py(scoopBody.position.y);
+    const sr = ps(SCOOP_RADIUS);
+    // Outer glow when ready, dim when on cooldown
+    const ready = scoopCooldown === 0 && !isMultiball;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fillStyle = ready ? 'rgba(255, 215, 0, 0.3)' : 'rgba(80, 80, 80, 0.3)';
+    ctx.fill();
+    ctx.strokeStyle = ready ? '#FFD700' : '#555';
+    ctx.lineWidth = ps(3);
+    ctx.stroke();
+    // Inner ring
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = ready ? '#FFD700' : '#444';
+    ctx.fill();
+    // Label
+    ctx.fillStyle = ready ? '#000' : '#888';
+    ctx.font = `bold ${ps(14)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('MB', sx, sy + ps(5));
   }
 
   // Bumpers
@@ -537,6 +667,23 @@ function render() {
     // Highlight
     ctx.beginPath();
     ctx.arc(bx - br * 0.25, by - br * 0.25, br * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fill();
+  }
+
+  // Multiball extra balls
+  for (const mb of multiballs) {
+    const mx = px(mb.position.x), my = py(mb.position.y);
+    const mr = ps(BALL_RADIUS);
+    ctx.beginPath();
+    ctx.arc(mx, my, mr, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFD700';
+    ctx.fill();
+    ctx.strokeStyle = '#B8860B';
+    ctx.lineWidth = ps(2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(mx - mr * 0.25, my - mr * 0.25, mr * 0.3, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fill();
   }
