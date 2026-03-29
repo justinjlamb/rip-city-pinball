@@ -41,6 +41,9 @@
   <button id="btn-flipR" onclick="setMode('flipperR')">Set Flipper R</button>
   <button id="btn-ball" onclick="setMode('ball')">Set Ball Start</button>
   <div class="sep"></div>
+  <div class="sep"></div>
+  <span class="info">Group: 0=outer 1-4=interior</span>
+  <div class="sep"></div>
   <button onclick="exportData()">Export JSON</button>
   <button onclick="saveToFile()">Save to File</button>
   <div class="sep"></div>
@@ -65,11 +68,13 @@ const tableImg = new Image();
 tableImg.src = 'table-layer0.png';
 
 let data = null;
-let vertices = []; // [{x, y}]
+let vertices = []; // [{x, y}] — outer boundary
+let interiorGroups = []; // [{vertices: [{x,y}], color: string}] — interior contours
 let flipperL = null;
 let flipperR = null;
 let ballStart = null;
 
+let activeGroup = -1; // -1 = outer boundary, 0+ = interior group index
 let mode = 'move'; // move, add, delete, flipperL, flipperR, ball
 let dragIdx = -1;
 let dragOffX = 0, dragOffY = 0;
@@ -119,14 +124,43 @@ async function loadData() {
   flipperL = { ...data.flipperLeft };
   flipperR = { ...data.flipperRight };
   ballStart = { ...data.ballStart };
-  document.getElementById('info').textContent = `${vertices.length} vertices loaded`;
+
+  // Load interior contours (slingshots, outlane rails)
+  interiorGroups = [];
+  if (data.interiorVertices && data.interiorWalls) {
+    // Split interior vertices into separate contours
+    // Holes were traced sequentially: 24 verts each for slings, 30 each for outlanes
+    const iv = data.interiorVertices;
+    const colors = ['#ff6b6b', '#6bff6b', '#6b6bff', '#ffff6b'];
+    // Find contour boundaries by detecting large jumps between consecutive vertices
+    let groupStart = 0;
+    for (let i = 1; i <= iv.length; i++) {
+      if (i === iv.length || Math.sqrt((iv[i][0]-iv[i-1][0])**2 + (iv[i][1]-iv[i-1][1])**2) > 200) {
+        const groupVerts = iv.slice(groupStart, i).map(([x, y]) => ({ x, y }));
+        interiorGroups.push({
+          vertices: groupVerts,
+          color: colors[interiorGroups.length % colors.length],
+        });
+        groupStart = i;
+      }
+    }
+  }
+
+  document.getElementById('info').textContent = `${vertices.length} outer + ${interiorGroups.length} interior groups loaded`;
   render();
 }
 
+function getActiveVerts() {
+  if (activeGroup === -1) return vertices;
+  if (activeGroup >= 0 && activeGroup < interiorGroups.length) return interiorGroups[activeGroup].vertices;
+  return vertices;
+}
+
 function findNearestVertex(ix, iy, maxDist = 20) {
+  const verts = getActiveVerts();
   let best = -1, bestDist = maxDist;
-  for (let i = 0; i < vertices.length; i++) {
-    const dx = vertices[i].x - ix, dy = vertices[i].y - iy;
+  for (let i = 0; i < verts.length; i++) {
+    const dx = verts[i].x - ix, dy = verts[i].y - iy;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < bestDist) { bestDist = dist; best = i; }
   }
@@ -134,12 +168,12 @@ function findNearestVertex(ix, iy, maxDist = 20) {
 }
 
 function findNearestEdge(ix, iy) {
+  const verts = getActiveVerts();
   let best = -1, bestDist = 30;
-  for (let i = 0; i < vertices.length; i++) {
-    const j = (i + 1) % vertices.length;
-    const ax = vertices[i].x, ay = vertices[i].y;
-    const bx = vertices[j].x, by = vertices[j].y;
-    // Point-to-segment distance
+  for (let i = 0; i < verts.length; i++) {
+    const j = (i + 1) % verts.length;
+    const ax = verts[i].x, ay = verts[i].y;
+    const bx = verts[j].x, by = verts[j].y;
     const dx = bx - ax, dy = by - ay;
     const len2 = dx * dx + dy * dy;
     if (len2 < 1) continue;
@@ -167,20 +201,23 @@ canvas.addEventListener('mousedown', e => {
     const idx = findNearestVertex(ix, iy);
     if (idx >= 0) {
       dragIdx = idx;
-      dragOffX = vertices[idx].x - ix;
-      dragOffY = vertices[idx].y - iy;
+      const verts = getActiveVerts();
+      dragOffX = verts[idx].x - ix;
+      dragOffY = verts[idx].y - iy;
     }
   } else if (mode === 'add') {
+    const verts = getActiveVerts();
     const edgeIdx = findNearestEdge(ix, iy);
     if (edgeIdx >= 0) {
-      vertices.splice(edgeIdx + 1, 0, { x: Math.round(ix), y: Math.round(iy) });
+      verts.splice(edgeIdx + 1, 0, { x: Math.round(ix), y: Math.round(iy) });
       dragIdx = edgeIdx + 1;
       updateInfo();
     }
   } else if (mode === 'delete') {
+    const verts = getActiveVerts();
     const idx = findNearestVertex(ix, iy);
-    if (idx >= 0 && vertices.length > 3) {
-      vertices.splice(idx, 1);
+    if (idx >= 0 && verts.length > 3) {
+      verts.splice(idx, 1);
       updateInfo();
     }
   } else if (mode === 'flipperL') {
@@ -209,8 +246,9 @@ canvas.addEventListener('mousemove', e => {
   const [ix, iy] = toImage(e.clientX, e.clientY - 40);
 
   if (dragIdx >= 0) {
-    vertices[dragIdx].x = Math.round(ix + dragOffX);
-    vertices[dragIdx].y = Math.round(iy + dragOffY);
+    const verts = getActiveVerts();
+    verts[dragIdx].x = Math.round(ix + dragOffX);
+    verts[dragIdx].y = Math.round(iy + dragOffY);
     render();
     return;
   }
@@ -220,8 +258,10 @@ canvas.addEventListener('mousemove', e => {
   if (hoveredIdx !== prev) render();
 
   // Show coordinates
+  const groupLabel = activeGroup === -1 ? 'outer' : `group ${activeGroup}`;
+  const verts = getActiveVerts();
   document.getElementById('info').textContent =
-    `${vertices.length} vertices | (${Math.round(ix)}, ${Math.round(iy)})`;
+    `[${groupLabel}] ${verts.length} verts | (${Math.round(ix)}, ${Math.round(iy)})`;
 });
 
 canvas.addEventListener('mouseup', () => {
@@ -254,6 +294,20 @@ document.addEventListener('keydown', e => {
   if (e.key === 'm' || e.key === 'M') setMode('move');
   if (e.key === 'a' || e.key === 'A') setMode('add');
   if (e.key === 'd' || e.key === 'D') setMode('delete');
+  // Number keys switch active group: 0=outer, 1-4=interior groups
+  if (e.key >= '0' && e.key <= '9' && !e.metaKey && !e.ctrlKey) {
+    const num = parseInt(e.key);
+    if (num === 0) {
+      activeGroup = -1;
+    } else if (num - 1 < interiorGroups.length) {
+      activeGroup = num - 1;
+    }
+    hoveredIdx = -1;
+    dragIdx = -1;
+    const label = activeGroup === -1 ? 'OUTER' : `GROUP ${activeGroup + 1} (${interiorGroups[activeGroup].vertices.length} verts)`;
+    document.getElementById('mode-label').textContent = label;
+    render();
+  }
   // Cmd+Plus / Cmd+Minus for zoom
   if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
     e.preventDefault();
@@ -303,37 +357,51 @@ function render() {
 
   if (!vertices.length) return;
 
-  // Draw wall segments (cyan lines)
-  ctx.beginPath();
-  const [fx, fy] = toScreen(vertices[0].x, vertices[0].y);
-  ctx.moveTo(fx, fy);
-  for (let i = 1; i < vertices.length; i++) {
-    const [x, y] = toScreen(vertices[i].x, vertices[i].y);
-    ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  // Draw vertices
-  for (let i = 0; i < vertices.length; i++) {
-    const [x, y] = toScreen(vertices[i].x, vertices[i].y);
-    const r = i === hoveredIdx ? 8 : 5;
+  // Helper: draw a contour (closed polygon + vertices)
+  function drawContour(verts, lineColor, isActive, groupIdx) {
+    // Lines
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = i === hoveredIdx ? '#ff0' : i === dragIdx ? '#f00' : '#ff0';
-    ctx.fill();
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1;
+    const [fx, fy] = toScreen(verts[0].x, verts[0].y);
+    ctx.moveTo(fx, fy);
+    for (let i = 1; i < verts.length; i++) {
+      const [x, y] = toScreen(verts[i].x, verts[i].y);
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = isActive ? 3 : 1.5;
     ctx.stroke();
 
-    // Index label
-    if (scale > 0.3) {
-      ctx.fillStyle = '#fff';
-      ctx.font = '10px monospace';
-      ctx.fillText(i.toString(), x + 8, y - 4);
+    // Vertices (only show dots for the active group)
+    if (isActive) {
+      for (let i = 0; i < verts.length; i++) {
+        const [x, y] = toScreen(verts[i].x, verts[i].y);
+        const r = i === hoveredIdx ? 8 : 5;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = i === hoveredIdx ? '#ff0' : i === dragIdx ? '#f00' : '#ff0';
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        if (scale > 0.3) {
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px monospace';
+          ctx.fillText(i.toString(), x + 8, y - 4);
+        }
+      }
     }
+  }
+
+  // Draw outer boundary
+  drawContour(vertices, activeGroup === -1 ? 'rgba(0, 255, 255, 0.9)' : 'rgba(0, 255, 255, 0.3)', activeGroup === -1, -1);
+
+  // Draw interior groups
+  for (let g = 0; g < interiorGroups.length; g++) {
+    const grp = interiorGroups[g];
+    const isActive = activeGroup === g;
+    const color = isActive ? grp.color : grp.color.replace(')', ', 0.3)').replace('rgb', 'rgba');
+    drawContour(grp.vertices, isActive ? grp.color : 'rgba(150,150,150,0.4)', isActive, g);
   }
 
   // Draw flipper positions
@@ -384,15 +452,32 @@ function buildOutput() {
     const j = (i + 1) % vertices.length;
     walls.push([vertices[i].x, vertices[i].y, vertices[j].x, vertices[j].y]);
   }
+
+  // Interior walls from all groups
+  const intWalls = [];
+  const intVerts = [];
+  for (const grp of interiorGroups) {
+    for (let i = 0; i < grp.vertices.length; i++) {
+      const j = (i + 1) % grp.vertices.length;
+      intWalls.push([grp.vertices[i].x, grp.vertices[i].y, grp.vertices[j].x, grp.vertices[j].y]);
+    }
+    for (const v of grp.vertices) {
+      intVerts.push([v.x, v.y]);
+    }
+  }
+
   return {
     meta: {
       source: 'wall-editor.html (manually adjusted)',
       dimensions: [IMG_W, IMG_H],
       wallSegments: walls.length,
       vertexCount: vertices.length,
+      interiorWallSegments: intWalls.length,
     },
     walls,
     vertices: vertices.map(v => [v.x, v.y]),
+    interiorWalls: intWalls,
+    interiorVertices: intVerts,
     flipperLeft: flipperL,
     flipperRight: flipperR,
     ballStart,
