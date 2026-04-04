@@ -32,7 +32,7 @@ const IMG_W = 1694, IMG_H = 2376;
 // ── CONSTANTS ───────────────────────────────────────────────
 const BALL_RADIUS = 24;
 const PADDLE_LEN = 260;
-const PADDLE_WIDTH = 30;
+const PADDLE_WIDTH = 35;
 const FLIP_REST = 0.5;
 const FLIP_ACTIVE = -0.5;
 const FLIP_UP_SPEED = 0.35;
@@ -1306,18 +1306,19 @@ function drawFlipper(body, side) {
   ctx.fillRect(-w/2, -baseH/2, w, baseH);
   ctx.restore();
 
-  // 3. Black body with soft shadow onto red bezel
+  // 3. White body with black border and soft shadow onto red bezel
   const iBH = baseH - edgeW * 2, iTH = tipH - edgeW * 2;
   const iW = w - edgeW * 2;
 
+  // Inner shadow cast onto red bezel
   ctx.save();
   ctx.translate(0, ps(2.5) * side);
   ctx.beginPath();
   ctx.rect(-w, -baseH, w * 2, baseH * 2);
   taperPath(iBH, iTH, iW);
   ctx.clip('evenodd');
-  ctx.shadowColor = 'rgba(0,0,0,0.75)';
-  ctx.shadowBlur = ps(10);
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = ps(8);
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = top * ps(2);
   taperPath(iBH, iTH, iW);
@@ -1325,84 +1326,56 @@ function drawFlipper(body, side) {
   ctx.fill();
   ctx.restore();
 
+  // Black border ring
   ctx.save();
   ctx.translate(0, ps(2.5) * side);
   taperPath(iBH, iTH, iW);
-  const bodyGrad = ctx.createLinearGradient(0, top * iBH/2, 0, -top * iBH/2);
-  bodyGrad.addColorStop(0, '#252525');
-  bodyGrad.addColorStop(0.15, '#1a1a1a');
-  bodyGrad.addColorStop(0.5, '#0d0d0d');
-  bodyGrad.addColorStop(1, '#050505');
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fill();
+  ctx.restore();
+
+  // White body (inset from black border)
+  const borderW = ps(3.5);
+  const wBH = iBH - borderW * 2, wTH = iTH - borderW * 2;
+  const wW = iW - borderW * 2;
+
+  ctx.save();
+  ctx.translate(0, ps(2.5) * side);
+  taperPath(wBH, wTH, wW);
+  const bodyGrad = ctx.createLinearGradient(0, top * wBH/2, 0, -top * wBH/2);
+  bodyGrad.addColorStop(0, '#efe5d8');
+  bodyGrad.addColorStop(0.15, '#e8ddd0');
+  bodyGrad.addColorStop(0.5, '#ddd2c4');
+  bodyGrad.addColorStop(0.85, '#c9bfb2');
+  bodyGrad.addColorStop(1, '#b0a89c');
   ctx.fillStyle = bodyGrad;
   ctx.fill();
   ctx.restore();
 
-  // 4. Specular band
+  // 4. Specular sheen on white surface
   ctx.save();
   ctx.translate(0, ps(2.5) * side);
-  taperPath(iBH * 0.65, iTH * 0.65, iW * 0.9);
-  ctx.translate(0, top * iBH * 0.12);
-  const specGrad = ctx.createLinearGradient(0, top * iBH * 0.2, 0, -top * iBH * 0.1);
-  specGrad.addColorStop(0, 'rgba(255,255,255,0.12)');
-  specGrad.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+  taperPath(wBH * 0.55, wTH * 0.55, wW * 0.88);
+  ctx.translate(0, top * wBH * 0.14);
+  const specGrad = ctx.createLinearGradient(0, top * wBH * 0.2, 0, -top * wBH * 0.1);
+  specGrad.addColorStop(0, 'rgba(255,255,255,0.8)');
+  specGrad.addColorStop(0.4, 'rgba(255,255,255,0.4)');
   specGrad.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = specGrad;
   ctx.fill();
   ctx.restore();
 
-  // 5. Edge highlight
-  const hlSign = top;
-  ctx.beginPath();
-  ctx.moveTo(-iW/2 + iBH/2, hlSign * (iBH/2 - ps(2)) + ps(2.5) * side);
-  ctx.lineTo(iW/2 - iTH/2, hlSign * (iTH/2 - ps(2)) + ps(2.5) * side);
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = ps(1);
-  ctx.stroke();
-
-  // 6. Anchor bolt
-  const bodyOffY = ps(2.5) * side;
-  const hingeX = -w/2 + baseH/2;
-  const hingeY = bodyOffY;
-  const boltR = ps(9);
-  const hlO = ps(2.5);
-
-  ctx.beginPath();
-  ctx.arc(hingeX - ps(0.5) * top, hingeY - ps(0.5) * top, boltR + ps(1), 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(hingeX, hingeY, boltR + ps(0.5), 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fill();
-
-  const domeGrad = ctx.createRadialGradient(
-    hingeX + hlO * top, hingeY + hlO * top, 0,
-    hingeX, hingeY, boltR
-  );
-  domeGrad.addColorStop(0, '#f5f5f5');
-  domeGrad.addColorStop(0.08, '#e8e8e8');
-  domeGrad.addColorStop(0.2, '#d0d0d0');
-  domeGrad.addColorStop(0.35, '#b0b0b0');
-  domeGrad.addColorStop(0.5, '#8a8a8a');
-  domeGrad.addColorStop(0.7, '#666');
-  domeGrad.addColorStop(0.85, '#4a4a4a');
-  domeGrad.addColorStop(1, '#333');
-  ctx.beginPath();
-  ctx.arc(hingeX, hingeY, boltR, 0, Math.PI * 2);
-  ctx.fillStyle = domeGrad;
-  ctx.fill();
-  ctx.strokeStyle = '#222';
-  ctx.lineWidth = ps(0.8);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(
-    hingeX + hlO * top * 0.7,
-    hingeY + hlO * top * 0.7,
-    ps(1.8), 0, Math.PI * 2
-  );
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.fill();
+  // 5. Subtle shadow edge on underside
+  ctx.save();
+  ctx.translate(0, ps(2.5) * side);
+  taperPath(wBH, wTH, wW);
+  ctx.clip();
+  const shadowEdge = ctx.createLinearGradient(0, -top * wBH/2, 0, -top * wBH * 0.1);
+  shadowEdge.addColorStop(0, 'rgba(0,0,0,0.12)');
+  shadowEdge.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shadowEdge;
+  ctx.fillRect(-wW/2, -wBH/2, wW, wBH);
+  ctx.restore();
 
   ctx.restore();
 }
