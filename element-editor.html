@@ -131,10 +131,10 @@ function toWorld(sx, sy) {
 // ── ELEMENTS ─────────────────────────────────────────
 const elements = {
   bumpers: [
-    { id: 'B1', x: 640, y: 616, r: 40 },
-    { id: 'B2', x: 967, y: 621, r: 40 },
-    { id: 'B3', x: 798, y: 778, r: 40 },
-    { id: 'B4', x: 799, y: 397, r: 40 },
+    { id: 'B1', x: 641, y: 698, r: 60 },
+    { id: 'B2', x: 977, y: 697, r: 60 },
+    { id: 'B3', x: 818, y: 862, r: 60 },
+    { id: 'B4', x: 818, y: 504, r: 60 },
   ],
   targets: [
     // T1-T3: left wall, hittable from right. T4-T6: right wall, hittable from left.
@@ -145,12 +145,13 @@ const elements = {
     { id: 'T5', x: 1316, y: 1290, w: 50, h: 18, angle: 1.571 },
     { id: 'T6', x: 1317, y: 1396, w: 50, h: 18, angle: 1.571 },
   ],
-  scoop: { id: 'SCOOP', x: 304, y: 453, r: 35 },
+  scoop: { id: 'SCOOP', x: 385, y: 641, r: 35 },
+  gate: { id: 'GATE', x: 1474, y: 277, w: 120, h: 8, angle: -0.5 },
   ramp: {
     entrance: { id: 'R-IN',  x: 1152, y: 1038 },
-    cp1:      { id: 'R-CP1', x: 2004, y: 17 },
-    cp2:      { id: 'R-CP2', x: 350, y: -63 },
-    exit:     { id: 'R-OUT', x: 667, y: 461 },
+    cp1:      { id: 'R-CP1', x: 2025, y: 6 },
+    cp2:      { id: 'R-CP2', x: 272, y: -97 },
+    exit:     { id: 'R-OUT', x: 683, y: 535 },
   },
 };
 
@@ -161,6 +162,7 @@ function resetPositions() {
   elements.bumpers = d.bumpers;
   elements.targets = d.targets;
   elements.scoop = d.scoop;
+  elements.gate = d.gate;
   elements.ramp = d.ramp;
   selected = null;
   updateCoordPanel();
@@ -195,6 +197,16 @@ function hitTest(wx, wy) {
   if (Math.hypot(wx - s.x, wy - s.y) < s.r + 10) {
     return { type: 'scoop', index: 0, ref: s };
   }
+  const g = elements.gate;
+  {
+    const hw = g.w / 2 + 10, hh = g.h / 2 + 10;
+    const dx = wx - g.x, dy = wy - g.y;
+    const cos = Math.cos(-g.angle), sin = Math.sin(-g.angle);
+    const lx = dx * cos - dy * sin, ly = dx * sin + dy * cos;
+    if (Math.abs(lx) < hw && Math.abs(ly) < hh) {
+      return { type: 'gate', index: 0, ref: g };
+    }
+  }
   for (const key of ['entrance', 'cp1', 'cp2', 'exit']) {
     const p = elements.ramp[key];
     if (Math.hypot(wx - p.x, wy - p.y) < 20) {
@@ -210,7 +222,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '=' && (e.metaKey || e.ctrlKey)) { zoom *= 1.2; e.preventDefault(); }
   if (e.key === '-' && (e.metaKey || e.ctrlKey)) { zoom /= 1.2; e.preventDefault(); }
   if (e.key === '0' && (e.metaKey || e.ctrlKey)) { resize(); e.preventDefault(); }
-  if ((e.key === 'r' || e.key === 'R') && selected && selected.type === 'target') {
+  if ((e.key === 'r' || e.key === 'R') && selected && (selected.type === 'target' || selected.type === 'gate')) {
     selected.ref.angle += Math.PI / 12;
     updateCoordPanel();
   }
@@ -320,6 +332,9 @@ function copyCode() {
   });
   code += '\n// Multiball Scoop\n';
   code += 'createScoop(' + elements.scoop.x + ', ' + elements.scoop.y + ');\n';
+  code += '\n// Launcher Gate\n';
+  const gt = elements.gate;
+  code += 'launcherGate: { x: ' + gt.x + ', y: ' + gt.y + ', angle: ' + gt.angle.toFixed(3) + ' },\n';
   code += '\n// Ramp (cubic bezier)\n';
   const r = elements.ramp;
   code += 'entrance: { x: ' + r.entrance.x + ', y: ' + r.entrance.y + ' },\n';
@@ -536,6 +551,24 @@ function render() {
   ctx.textBaseline = 'middle';
   ctx.fillText('SCOOP', sc.x, sc.y - sc.r - 10);
   ctx.fillText('MB', sc.x, sc.y + 4);
+
+  // ── LAUNCHER GATE ─────────────────────────────────
+  const gt = elements.gate;
+  const isGateSel = selected && selected.type === 'gate';
+  ctx.save();
+  ctx.translate(gt.x, gt.y);
+  ctx.rotate(gt.angle);
+  ctx.fillStyle = isGateSel ? 'rgba(0,200,255,0.5)' : 'rgba(0,200,255,0.3)';
+  ctx.fillRect(-gt.w/2, -gt.h/2, gt.w, gt.h);
+  ctx.strokeStyle = isGateSel ? '#00e0ff' : '#00c8ff';
+  ctx.lineWidth = (isGateSel ? 3 : 2) / zoom;
+  ctx.strokeRect(-gt.w/2, -gt.h/2, gt.w, gt.h);
+  ctx.fillStyle = '#00e0ff';
+  ctx.font = 'bold ' + (10/zoom) + "px 'JetBrains Mono'";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('GATE', 0, 0);
+  ctx.restore();
 
   // ── FLIPPER REFERENCE (not draggable) ──────────────
   const flipperL = { x: 520, y: 2138 };

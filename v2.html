@@ -38,7 +38,7 @@ const FLIP_ACTIVE = -0.5;
 const FLIP_UP_SPEED = 0.35;
 const FLIP_DN_SPEED = 0.12;
 const WALL_T = 8;
-const MAX_SPEED = 38;
+const MAX_SPEED = 46;
 
 // Drain gap: vertices 63→64 (the opening where ball exits)
 const DRAIN_VERTEX_A = 63;
@@ -54,7 +54,7 @@ const COL = {
 const { Engine, World, Bodies, Body, Composite, Events } = Matter;
 
 const engine = Engine.create();
-engine.gravity.y = 1.0;
+engine.gravity.y = 1.2;
 engine.positionIterations = 30;
 engine.velocityIterations = 10;
 const world = engine.world;
@@ -179,7 +179,7 @@ function createWall(x1, y1, x2, y2, label, colCategory) {
   World.add(world, w);
 }
 
-const BUMPER_RADIUS = 40;
+const BUMPER_RADIUS = 60;
 const BUMPER_FORCE = 20;
 const bumperBodies = [];
 
@@ -216,7 +216,7 @@ let multiballLaunchCount = 0;
 let multiballCaughtBall = null; // stashed ball reference during catch sequence
 
 function triggerMultiball() {
-  if (isMultiball || scoopCooldown > 0 || multiballPhase !== 'idle') return;
+  if (scoopCooldown > 0 || multiballPhase !== 'idle') return;
 
   // Phase 1: Catch the ball — remove from physics
   multiballPhase = 'caught';
@@ -389,10 +389,10 @@ function renderTargets() {
 
 // ── RAMP (scripted cubic bezier — ball animated along path) ──
 const RAMP = {
-  entrance: { x: 1156, y: 1009 },
-  cp1:      { x: 1996, y: 55 },
-  cp2:      { x: 350, y: -63 },
-  exit:     { x: 667, y: 461 },
+  entrance: { x: 1152, y: 1038 },
+  cp1:      { x: 2025, y: 6 },
+  cp2:      { x: 272, y: -97 },
+  exit:     { x: 683, y: 535 },
   widthEntrance: 140,  // wide funnel at mouth
   widthChannel: 70,    // narrows to this
   taperEnd: 0.25,      // funnel over first 25% of curve
@@ -452,6 +452,7 @@ function createRamp() {
 
 function renderRamp() {
   if (!rampRailPoints.left) return;
+  return; // HIDDEN — ramp visuals replaced by table image, keeping code for future edits
   const { left, right } = rampRailPoints;
   const active = rampAnimating;
 
@@ -539,13 +540,13 @@ async function loadWalls() {
   createFlippers();
 
   // Bumpers — from element editor
-  createBumper(640, 616);   // B1
-  createBumper(967, 621);   // B2
-  createBumper(798, 778);   // B3
-  createBumper(799, 397);   // B4
+  createBumper(641, 698);   // B1 — left mid
+  createBumper(977, 697);   // B2 — right mid
+  createBumper(818, 862);   // B3 — bottom center
+  createBumper(818, 504);   // B4 — top center (first hit from ramp)
 
   // Scoop — multiball trigger, upper-left area
-  createScoop(304, 453);
+  createScoop(385, 641);
 
   // Drop targets — T1-T3 left wall (hit from right), T4-T6 right wall (hit from left)
   createTarget(262, 1043, 1.571, 0);
@@ -557,8 +558,8 @@ async function loadWalls() {
 
   // ── ONE-WAY GATE at top of launcher channel ───────
   // Prevents ball from falling back into the launcher after exiting
-  launcherGate = Bodies.rectangle(1420, 310, 120, WALL_T, {
-    isStatic: true, label: 'launcher-gate', angle: -0.5, // angled down-left to deflect ball into playfield
+  launcherGate = Bodies.rectangle(1474, 277, 120, WALL_T, {
+    isStatic: true, label: 'launcher-gate', angle: -0.500, // angled down-left to deflect ball into playfield
     friction: 0.1, restitution: 0.5,
     collisionFilter: { category: 0, mask: 0 }, // starts disabled
   });
@@ -625,13 +626,16 @@ async function loadWalls() {
         addScore(POINTS.BUMPER, 'BUMPER');
       }
 
-      // Ramp entrance — only main ball, not during multiball
-      if (otherBody.label === 'ramp-entrance' && !rampAnimating && ballBody === ball && multiballPhase === 'idle' && !isMultiball) {
+      // Ramp entrance — any ball can use it
+      if (otherBody.label === 'ramp-entrance' && !rampAnimating) {
         const spd = Math.sqrt(ballBody.velocity.x ** 2 + ballBody.velocity.y ** 2);
         if (ballBody.velocity.y < -3 && spd > RAMP.minSpeed) {
           rampAnimating = true;
           rampT = 0;
           rampBall = ballBody;
+          // Remove from multiballs array if it's an extra ball
+          const mbIdx = multiballs.indexOf(ballBody);
+          if (mbIdx >= 0) multiballs.splice(mbIdx, 1);
           World.remove(world, ballBody);
           sndSling();
         }
@@ -914,9 +918,17 @@ function update() {
       rampT = 1;
       rampAnimating = false;
       Body.setPosition(rampBall, { x: RAMP.exit.x, y: RAMP.exit.y });
-      Body.setVelocity(rampBall, { x: -8, y: 10 });
+      // Randomize exit velocity so ramp doesn't feel robotic
+      const vx = 5 + (Math.random() - 0.4) * 6;  // 2 to 8.6, biased right
+      const vy = 9 + Math.random() * 5;           // 9 to 14
+      Body.setVelocity(rampBall, { x: vx, y: vy });
       World.add(world, rampBall);
-      ball = rampBall;
+      if (rampBall === ball || !ball) {
+        ball = rampBall;
+      } else {
+        // Re-add multiball extra back to the array
+        multiballs.push(rampBall);
+      }
       rampBall = null;
       addScore(POINTS.RAMP, 'RAMP COMPLETE');
       sndMultiball();
@@ -1049,52 +1061,47 @@ function render() {
   // Drop targets
   renderTargets();
 
-  // Scoop
-  if (scoopBody) {
-    const sx = px(scoopBody.position.x), sy = py(scoopBody.position.y);
-    const sr = ps(SCOOP_RADIUS);
-    // Outer glow when ready, dim when on cooldown
-    const ready = scoopCooldown === 0 && !isMultiball;
-    ctx.beginPath();
-    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-    ctx.fillStyle = ready ? 'rgba(255, 215, 0, 0.3)' : 'rgba(80, 80, 80, 0.3)';
-    ctx.fill();
-    ctx.strokeStyle = ready ? '#FFD700' : '#555';
-    ctx.lineWidth = ps(3);
-    ctx.stroke();
-    // Inner ring
-    ctx.beginPath();
-    ctx.arc(sx, sy, sr * 0.5, 0, Math.PI * 2);
-    ctx.fillStyle = ready ? '#FFD700' : '#444';
-    ctx.fill();
-    // Label
-    ctx.fillStyle = ready ? '#000' : '#888';
-    ctx.font = `bold ${ps(14)}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillText('MB', sx, sy + ps(5));
-  }
+  // Scoop — HIDDEN, visuals replaced by table image, keeping code for future edits
+  // if (scoopBody) {
+  //   const sx = px(scoopBody.position.x), sy = py(scoopBody.position.y);
+  //   const sr = ps(SCOOP_RADIUS);
+  //   const ready = scoopCooldown === 0 && !isMultiball;
+  //   ctx.beginPath();
+  //   ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  //   ctx.fillStyle = ready ? 'rgba(255, 215, 0, 0.3)' : 'rgba(80, 80, 80, 0.3)';
+  //   ctx.fill();
+  //   ctx.strokeStyle = ready ? '#FFD700' : '#555';
+  //   ctx.lineWidth = ps(3);
+  //   ctx.stroke();
+  //   ctx.beginPath();
+  //   ctx.arc(sx, sy, sr * 0.5, 0, Math.PI * 2);
+  //   ctx.fillStyle = ready ? '#FFD700' : '#444';
+  //   ctx.fill();
+  //   ctx.fillStyle = ready ? '#000' : '#888';
+  //   ctx.font = `bold ${ps(14)}px sans-serif`;
+  //   ctx.textAlign = 'center';
+  //   ctx.fillText('MB', sx, sy + ps(5));
+  // }
 
-  // Bumpers
-  for (const b of bumperBodies) {
-    const bx = px(b.position.x), by = py(b.position.y);
-    const br = ps(BUMPER_RADIUS);
-    // Outer ring
-    ctx.beginPath();
-    ctx.arc(bx, by, br, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(200, 16, 46, 0.85)';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = ps(3);
-    ctx.stroke();
-    // Inner circle
-    ctx.beginPath();
-    ctx.arc(bx, by, br * 0.55, 0, Math.PI * 2);
-    ctx.fillStyle = '#111';
-    ctx.fill();
-    ctx.strokeStyle = '#C8102E';
-    ctx.lineWidth = ps(2);
-    ctx.stroke();
-  }
+  // Bumpers — HIDDEN, visuals replaced by table image, keeping code for future edits
+  // for (const b of bumperBodies) {
+  //   const bx = px(b.position.x), by = py(b.position.y);
+  //   const br = ps(BUMPER_RADIUS);
+  //   ctx.beginPath();
+  //   ctx.arc(bx, by, br, 0, Math.PI * 2);
+  //   ctx.fillStyle = 'rgba(200, 16, 46, 0.85)';
+  //   ctx.fill();
+  //   ctx.strokeStyle = '#fff';
+  //   ctx.lineWidth = ps(3);
+  //   ctx.stroke();
+  //   ctx.beginPath();
+  //   ctx.arc(bx, by, br * 0.55, 0, Math.PI * 2);
+  //   ctx.fillStyle = '#111';
+  //   ctx.fill();
+  //   ctx.strokeStyle = '#C8102E';
+  //   ctx.lineWidth = ps(2);
+  //   ctx.stroke();
+  // }
 
   // Ball
   if (ball && gameState !== 'attract' && multiballPhase !== 'caught' && multiballPhase !== 'announcing') {
@@ -1110,6 +1117,24 @@ function render() {
     // Highlight
     ctx.beginPath();
     ctx.arc(bx - br * 0.25, by - br * 0.25, br * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fill();
+  }
+
+  // Ball on ramp (could be silver or gold)
+  if (rampAnimating && rampBall) {
+    const rx = px(rampBall.position.x), ry = py(rampBall.position.y);
+    const rr = ps(BALL_RADIUS);
+    const isMain = rampBall === ball || !ball;
+    ctx.beginPath();
+    ctx.arc(rx, ry, rr, 0, Math.PI * 2);
+    ctx.fillStyle = isMain ? '#c0c0c0' : '#FFD700';
+    ctx.fill();
+    ctx.strokeStyle = isMain ? '#888' : '#B8860B';
+    ctx.lineWidth = ps(2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(rx - rr * 0.25, ry - rr * 0.25, rr * 0.3, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fill();
   }

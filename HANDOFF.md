@@ -58,23 +58,20 @@ A playable pinball game themed around the Moda Center. Uses pre-rendered Gemini 
 - Everything else is invisible physics aligned to the image
 - Collision layer system for ramps (playfield, left_ramp, right_ramp, launcher)
 
-**Current state (end of Mar 21 session):**
-- All physics bodies mapped from physics-editor.html with labels and layer tags ✓
-- Collision layer system implemented (5 layers with category/mask filtering) ✓
-- Layer transition trigger zones defined (entrance/exit for each ramp) ✓
-- Debug mode (Shift+D) with labels, layer colors, and per-layer filtering (keys 1-5) ✓
-- Flippers WORKING — simple direct angle control, no attractors ✓
-- Ball is orange basketball (radius 36) ✓
-- Sound effects (bumper, flipper, launch, drain, multiball, ramp) ✓
-- Moda Center scoop triggers multiball ✓
-- Attract mode, score overlay, game flow ✓
+**Current state (end of Apr 3 session):**
+- Gemini-generated table art with themed elements: "BOOKING REQUESTS" red translucent ramp, "EVENT DETAILS FORM" marquee (multiball scoop), Slack/Excel/Outlook/Momentus bumpers ✓
+- All visual overlays hidden (ramp, bumpers, scoop) — table image provides visuals, physics bodies are invisible ✓
+- Bumper radius increased to 60px to match table art ✓
+- Element positions aligned via element-editor.html to match new table art ✓
+- Flippers, multiball, ramp animation, scoring all functional ✓
+- Sound effects, attract mode, touch controls, debug mode all working ✓
 
 **What needs fine-tuning next:**
-1. **Flipper positions** — Left flipper is good. Right flipper at x=1120, may need minor position/angle adjustments to perfectly overlay the image flippers
-2. **Physics body alignment** — The editor-mapped walls/curves need testing with actual gameplay. Use Shift+D debug mode + layer filtering (keys 1-5) to identify misaligned bodies
-3. **Layer transition triggers** — The rectangular trigger zones for ramp entrances/exits are rough estimates. Need testing to confirm balls transition at the right spots
-4. **Launcher** — Ball starts in launcher channel, fires upward. One-way gate switches to playfield when ball goes above y=400. May need adjustment
-5. **Visual polish** — Ball trail, bumper hit effects are working but could be enhanced
+1. **Image layering (depth illusion)** — Split table into background + foreground transparency so ball visually goes under the ramp during normal play (see "Next Up" section)
+2. **Flipper positions** — May need minor adjustments to overlay the image flippers
+3. **Physics body alignment** — Walls/curves need testing with gameplay
+4. **Game over screen** — Currently plain white text
+5. **Attract screen polish** — No Moda Center branding yet
 
 ### 3. Physics Editor (`physics-editor.html` — TOOL)
 Drag-and-drop visual editor for positioning physics bodies on the table image. Supports walls, bumpers, targets, curves (bezier with 3 control points), and flippers. "Copy Code" exports coordinates as JS.
@@ -179,6 +176,16 @@ Ball masks:
 **THE definitive guide is at `docs/BUILD-PLAYBOOK.md`** — compiled from 2 rounds of deep research (14 agents). Follow it phase by phase. It has every code snippet, every tuning value, and the exact fix for the flipper impulse problem.
 
 Quick summary: `Body.setAngle(body, angle, true)` — the `updateVelocity=true` parameter is the one-line fix that makes static flippers transfer real momentum to the ball. Then: positionIterations=100, ball restitution=0, speed clamp at 45, slingshots as triangle sensors, combo scoring, image layer splitting, ship after Phase 5.
+
+## Next Up
+
+1. **Image Layering (depth illusion)** — Split table into background (Layer 0) and foreground transparency (Layer 1, ramp only). Render order: background → ball → ramp overlay. When ball is in ramp animation, draw ball AFTER overlay so it appears on top. This makes the ball visually go under the chrome ramp during normal play. Need to generate a transparent PNG (1694×2376) with just the ramp isolated. Code change is small — sandwich the ball between two canvas drawImage calls, flip order when `rampAnimating` is true.
+
+2. **Marquee sign** — "EVENT DETAILS FORM" retro theater marquee for the scoop area. In progress via Gemini image gen.
+
+3. **Game over screen** — Currently plain white text. Could show final score more prominently, invite replay.
+
+4. **Attract screen polish** — Plain white text on dark overlay. No Moda Center branding or showcase personality yet.
 
 ## Key Lessons
 
