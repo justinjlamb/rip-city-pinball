@@ -82,6 +82,97 @@ canvas { display: block; width: 100%; height: 100%; }
 #submit-score:disabled { background: #555; cursor: wait; }
 .gameover-skip { font-size: 0.5rem; color: #555; cursor: pointer; font-family: 'Press Start 2P', monospace; }
 .gameover-skip:hover { color: #888; }
+
+/* ── MOBILE HUD (hidden on desktop) ── */
+#mobile-hud { display: none; }
+#mobile-touch-hint { display: none; }
+
+/* ── MOBILE LAYOUT ── */
+@media (max-width: 900px) {
+  #arcade { grid-template-columns: 1fr; }
+  #panel-left, #panel-right { display: none !important; }
+  #game-col { height: 100vh; height: 100dvh; }
+  canvas { width: 100vw; height: 100vh; height: 100dvh; object-fit: contain; }
+
+  /* Mobile HUD overlay */
+  #mobile-hud {
+    display: flex; position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+    justify-content: space-between; align-items: center;
+    padding: 0.6rem 1rem; pointer-events: none;
+    background: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 100%);
+  }
+  .mhud-score { font-family: 'Press Start 2P', monospace; font-size: 1.1rem; color: #FFD700; text-shadow: 0 0 8px rgba(255,215,0,0.5); }
+  .mhud-balls { display: flex; gap: 0.4rem; }
+  .mhud-pip { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #444; background: #1a1a1a; }
+  .mhud-pip.active { border-color: #FFD700; background: radial-gradient(circle at 35% 35%, #fff, #FFD700 40%, #b8860b); box-shadow: 0 0 6px rgba(255,215,0,0.5); }
+  .mhud-pip.used { border-color: #333; background: #222; opacity: 0.4; }
+  .mhud-streak { font-family: 'Press Start 2P', monospace; font-size: 0.7rem; color: #FFD700; text-shadow: 0 0 10px rgba(255,215,0,0.5); }
+  .mhud-streak.hidden { display: none; }
+
+  /* Mobile feed overlay */
+  #mobile-feed {
+    display: flex; flex-direction: column; gap: 0.2rem;
+    position: absolute; bottom: 6rem; left: 0.5rem; z-index: 5;
+    pointer-events: none; max-width: 55%; max-height: 25vh; overflow: hidden;
+  }
+  .mfeed-item {
+    font-family: 'Share Tech Mono', monospace; font-size: 0.75rem;
+    color: rgba(255,255,255,0.7); padding: 0.2rem 0.5rem;
+    background: rgba(0,0,0,0.5); border-radius: 3px;
+    animation: mfeed-in 0.3s ease-out;
+  }
+  .mfeed-item.major { color: #fff; border-left: 2px solid #C8102E; }
+  .mfeed-item.epic { color: #FFD700; border-left: 2px solid #FFD700; }
+  .mfeed-item .mfeed-pts { color: #FFD700; margin-left: 0.3rem; }
+  @keyframes mfeed-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+
+  /* Touch zone hints */
+  #mobile-touch-hint {
+    display: flex; position: absolute; inset: 0; z-index: 6;
+    pointer-events: none; opacity: 0; transition: opacity 0.5s;
+  }
+  #mobile-touch-hint.visible { opacity: 1; }
+  .touch-zone {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    font-family: 'Press Start 2P', monospace; font-size: 0.7rem;
+    color: rgba(255,255,255,0.3); letter-spacing: 2px;
+  }
+  .touch-zone-left { border-right: 1px solid rgba(255,255,255,0.1); }
+
+  /* Mobile start prompt on canvas */
+  #mobile-start {
+    display: none; position: absolute; inset: 0; z-index: 7;
+    flex-direction: column; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #mobile-start.visible { display: flex; }
+  .mstart-text {
+    font-family: 'Press Start 2P', monospace; font-size: 1.4rem;
+    color: #FFD700; text-shadow: 0 0 20px rgba(255,215,0,0.5);
+    animation: blink-prompt 1.2s ease-in-out infinite; line-height: 2;
+    text-align: center;
+  }
+
+  /* Mobile game over adjustments */
+  .gameover-title { font-size: 1.4rem; }
+  .gameover-score { font-size: 0.8rem; }
+  #player-name { width: 220px; font-size: 1rem; padding: 0.5rem 0.8rem; }
+  .gameover-form label { font-size: 0.5rem; }
+  #submit-score { font-size: 0.6rem; padding: 0.6rem 1.5rem; }
+
+  /* Mobile leaderboard in game over */
+  #mobile-leaderboard {
+    display: none; max-height: 30vh; overflow-y: auto; width: 280px;
+    margin-top: 0.5rem; border-top: 1px solid #333; padding-top: 0.5rem;
+  }
+  #mobile-leaderboard.visible { display: block; }
+  .mlb-title { font-family: 'Press Start 2P', monospace; font-size: 0.5rem; color: #FFD700; text-align: center; margin-bottom: 0.4rem; }
+  .mlb-row { display: flex; justify-content: space-between; padding: 0.2rem 0.3rem; font-family: 'Share Tech Mono', monospace; font-size: 0.75rem; }
+  .mlb-row .mlb-rank { color: #555; width: 1.5rem; }
+  .mlb-row .mlb-name { color: #ccc; flex: 1; }
+  .mlb-row .mlb-pts { color: #C8102E; }
+  .mlb-row:nth-child(-n+4) .mlb-rank { color: #FFD700; }
+}
 </style>
 </head>
 <body>
@@ -120,6 +211,20 @@ canvas { display: block; width: 100%; height: 100%; }
   </div>
   <div id="game-col">
     <canvas id="G"></canvas>
+    <div id="mobile-hud">
+      <span class="mhud-score" id="mhud-score">0</span>
+      <span class="mhud-streak hidden" id="mhud-streak">x2</span>
+      <span class="mhud-balls" id="mhud-balls">
+        <span class="mhud-pip active"></span>
+        <span class="mhud-pip"></span>
+      </span>
+    </div>
+    <div id="mobile-feed"></div>
+    <div id="mobile-touch-hint">
+      <div class="touch-zone touch-zone-left">LEFT<br>FLIPPER</div>
+      <div class="touch-zone">RIGHT<br>FLIPPER</div>
+    </div>
+    <div id="mobile-start"><div class="mstart-text">TAP TO<br>START</div></div>
     <div id="gameover-overlay" class="hidden">
       <div class="gameover-title">GAME OVER</div>
       <div class="gameover-score" id="final-score"></div>
@@ -129,6 +234,7 @@ canvas { display: block; width: 100%; height: 100%; }
         <button id="submit-score">SUBMIT</button>
         <div class="gameover-skip" id="skip-score">SKIP</div>
       </div>
+      <div id="mobile-leaderboard"></div>
     </div>
   </div>
   <div id="panel-right">
@@ -148,11 +254,13 @@ canvas { display: block; width: 100%; height: 100%; }
 
 const canvas = document.getElementById('G');
 const ctx = canvas.getContext('2d');
+const isMobile = window.innerWidth <= 900;
 
 const tableImg = new Image();
 tableImg.src = 'table-layer0.png';
 let imageLoaded = false;
 tableImg.onload = () => { imageLoaded = true; };
+tableImg.onerror = () => { console.error('table-layer0.png failed to load — game will not render'); };
 
 const tableLitImg = new Image();
 tableLitImg.src = 'table-lit.png';
@@ -365,7 +473,7 @@ const IMG_W = 1694, IMG_H = 2376;
 // ── CONSTANTS ───────────────────────────────────────────────
 const BALL_RADIUS = 24;
 const PADDLE_LEN = 260;
-const PADDLE_WIDTH = 35;
+const PADDLE_WIDTH = 40;
 const FLIP_REST = 0.5;
 const FLIP_ACTIVE = -0.5;
 const FLIP_UP_SPEED = 0.35;
@@ -409,7 +517,7 @@ function initAudio() {
     if (!audioReady) {
       audioCtx.resume().then(() => { audioReady = true; });
     }
-  } catch(e) {}
+  } catch(e) { console.warn('Audio:', e.message); }
 }
 
 // Safari requires audio init from multiple gesture types
@@ -428,7 +536,7 @@ function playTone(freq, dur, type, vol) {
     g.gain.setValueAtTime(vol || 0.08, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
     o.start(); o.stop(audioCtx.currentTime + dur);
-  } catch(e) {}
+  } catch(e) { console.warn('Audio:', e.message); }
 }
 
 function sndBumper()  { playTone(660, 0.08, 'square', 0.1); playTone(880, 0.06, 'sine', 0.06); }
@@ -462,7 +570,6 @@ let shakeTrauma = 0;          // screen shake intensity
 let score = 0;
 let highScore = 0;
 let lastMessage = '';
-let messageTimer = 0;
 
 const POINTS = {
   BUMPER: 150,
@@ -1285,7 +1392,8 @@ function flipperHitsBall(hinge, angle, ballPos) {
 
 function sweepFlipper(body, hinge, fromAngle, toAngle) {
   // Exclude ramp-animating ball and null refs
-  const allBalls = (rampAnimating ? [] : (ball ? [ball] : [])).concat(multiballs).filter(Boolean);
+  const mainBallOnRamp = rampAnimating && (rampBall === ball || !ball);
+  const allBalls = (mainBallOnRamp ? [] : (ball ? [ball] : [])).concat(multiballs).filter(Boolean);
   if (allBalls.length === 0) {
     positionFlipper(body, hinge, toAngle);
     return;
@@ -1765,9 +1873,12 @@ function update() {
       }
     }
 
+    // Skip remaining checks if drainBall changed state
+    if (gameState !== 'play') { /* drainBall fired — skip launcher/stuck checks */ }
+
     // Launcher re-entry: if ball rolls back into the launcher channel,
     // switch to launch state so the player can fire it again
-    if (ball.position.x > 1480 && ball.position.y > 1800) {
+    else if (ball.position.x > 1480 && ball.position.y > 1800) {
       const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
       if (spd < 2) {
         gameState = 'launch';
@@ -1778,16 +1889,18 @@ function update() {
       }
     }
 
-    // Stuck ball detection: if ball is nearly stationary for 3 seconds, nudge it
-    const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
-    if (spd < 0.5) {
-      stuckFrames++;
-      if (stuckFrames > 180) { // 3 sec at 60fps
-        Body.setVelocity(ball, { x: (Math.random() - 0.5) * 8, y: -5 });
+    if (gameState === 'play') {
+      // Stuck ball detection: if ball is nearly stationary for 3 seconds, nudge it
+      const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
+      if (spd < 0.5) {
+        stuckFrames++;
+        if (stuckFrames > 180) { // 3 sec at 60fps
+          Body.setVelocity(ball, { x: (Math.random() - 0.5) * 8, y: -5 });
+          stuckFrames = 0;
+        }
+      } else {
         stuckFrames = 0;
       }
-    } else {
-      stuckFrames = 0;
     }
   }
 
@@ -1839,9 +1952,6 @@ function update() {
 
   // Scoop cooldown
   if (scoopCooldown > 0) scoopCooldown--;
-
-  // Message timer
-  if (messageTimer > 0) messageTimer--;
 
   // Drain timer
   if (gameState === 'drain') {
@@ -2279,6 +2389,16 @@ function render() {
       if (i < totalBalls - ballNum + 1) p.classList.add('active');
       else p.classList.add('used');
     });
+    // Mobile HUD mirror
+    if (isMobile) {
+      document.getElementById('mhud-score').textContent = score.toLocaleString();
+      const mpips = document.querySelectorAll('.mhud-pip');
+      mpips.forEach((p, i) => {
+        p.className = 'mhud-pip';
+        if (i < totalBalls - ballNum + 1) p.classList.add('active');
+        else p.classList.add('used');
+      });
+    }
   }
 
   // Progressive difficulty
@@ -2348,7 +2468,7 @@ function render() {
   if (screenFlashTimer > 0) {
     const t = screenFlashTimer / screenFlashMax;
     const alpha = t * t * screenFlashPeak;
-    ctx.fillStyle = screenFlashColor.replace(')', ',' + alpha + ')').replace('rgb', 'rgba');
+    ctx.fillStyle = `rgba(${screenFlashColor.slice(4, -1)}, ${alpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     screenFlashTimer--;
   }
@@ -2572,13 +2692,20 @@ document.getElementById('submit-score').addEventListener('click', async () => {
   btn.textContent = 'SAVING...';
   const placeholder = document.getElementById('lb-placeholder');
   if (placeholder) placeholder.remove();
-  await submitScore(name, gameOverFinalScore);
-  btn.disabled = false;
-  btn.textContent = 'SUBMIT';
-  hideGameOverOverlay();
-  if (gameOverFinalScore > highScore) highScore = gameOverFinalScore;
-  gameState = 'attract';
-  document.getElementById('start-prompt').classList.remove('hidden');
+  const saved = await submitScore(name, gameOverFinalScore);
+  if (saved) {
+    btn.textContent = 'SAVED!';
+    await new Promise(r => setTimeout(r, 800));
+    hideGameOverOverlay();
+    if (gameOverFinalScore > highScore) highScore = gameOverFinalScore;
+    gameState = 'attract';
+    document.getElementById('start-prompt').classList.remove('hidden');
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'RETRY';
+    btn.style.borderColor = '#C8102E';
+    setTimeout(() => { btn.style.borderColor = ''; btn.textContent = 'SUBMIT'; }, 2000);
+  }
 });
 
 document.getElementById('player-name').addEventListener('keydown', e => {
@@ -2603,6 +2730,99 @@ loadWalls().then(() => {
   console.error('Failed to load wall-data.json:', err);
   requestAnimationFrame(gameLoop);
 });
+
+// ═══════════════════════════════════════════════════════════════
+// MOBILE SUPPORT
+// ═══════════════════════════════════════════════════════════════
+
+if (isMobile) {
+  // Show start prompt on canvas
+  document.getElementById('mobile-start').classList.add('visible');
+
+  // Show touch zone hints on first load, fade after 3 seconds
+  const hint = document.getElementById('mobile-touch-hint');
+  hint.classList.add('visible');
+  setTimeout(() => hint.classList.remove('visible'), 3000);
+
+  // Mirror feed items to mobile feed overlay
+  const mobileFeed = document.getElementById('mobile-feed');
+  const _origAddFeedItem = addFeedItem;
+  addFeedItem = function(label, pts, tier, collapseKey, count, total) {
+    _origAddFeedItem(label, pts, tier, collapseKey, count, total);
+    const div = document.createElement('div');
+    div.className = 'mfeed-item' + (tier === 'epic' ? ' epic' : tier === 'major' ? ' major' : '');
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = label;
+    const ptsSpan = document.createElement('span');
+    ptsSpan.className = 'mfeed-pts';
+    ptsSpan.textContent = ' +' + pts.toLocaleString();
+    div.appendChild(labelSpan);
+    div.appendChild(ptsSpan);
+    mobileFeed.insertBefore(div, mobileFeed.firstChild);
+    while (mobileFeed.children.length > 3) mobileFeed.removeChild(mobileFeed.lastChild);
+    setTimeout(() => { if (div.parentNode) div.remove(); }, 4000);
+  };
+
+  // Mirror streak to mobile HUD
+  const origStreakEl = document.getElementById('hud-streak');
+  const mStreakEl = document.getElementById('mhud-streak');
+  new MutationObserver(() => {
+    if (origStreakEl.classList.contains('hidden')) mStreakEl.classList.add('hidden');
+    else { mStreakEl.classList.remove('hidden'); mStreakEl.textContent = document.getElementById('streak-multi').textContent; }
+  }).observe(origStreakEl, { attributes: true, attributeFilter: ['class'] });
+
+  // Mobile start prompt
+  const _origStartGame = startGame;
+  startGame = function() {
+    document.getElementById('mobile-start').classList.remove('visible');
+    _origStartGame();
+  };
+
+  // Populate mobile leaderboard in game over
+  function populateMobileLeaderboard() {
+    const mlb = document.getElementById('mobile-leaderboard');
+    mlb.textContent = '';
+    const title = document.createElement('div');
+    title.className = 'mlb-title';
+    title.textContent = 'HIGH SCORES';
+    mlb.appendChild(title);
+    const entries = document.querySelectorAll('#leaderboard li');
+    const max = Math.min(entries.length, 5);
+    for (let i = 0; i < max; i++) {
+      const row = document.createElement('div');
+      row.className = 'mlb-row';
+      const rank = document.createElement('span');
+      rank.className = 'mlb-rank';
+      rank.textContent = entries[i].querySelector('.lb-rank')?.textContent || (i + 1);
+      const name = document.createElement('span');
+      name.className = 'mlb-name';
+      name.textContent = entries[i].querySelector('.lb-name')?.textContent || '---';
+      const sc = document.createElement('span');
+      sc.className = 'mlb-pts';
+      sc.textContent = entries[i].querySelector('.lb-score')?.textContent || '0';
+      row.appendChild(rank);
+      row.appendChild(name);
+      row.appendChild(sc);
+      mlb.appendChild(row);
+    }
+    if (max > 0) mlb.classList.add('visible');
+  }
+
+  // Hook game over to show mobile leaderboard
+  const _origShowGameOver = showGameOverOverlay;
+  showGameOverOverlay = function() {
+    _origShowGameOver();
+    populateMobileLeaderboard();
+  };
+
+  // Hook game over hide to show mobile start again
+  const _origHideGameOver = hideGameOverOverlay;
+  hideGameOverOverlay = function() {
+    _origHideGameOver();
+    document.getElementById('mobile-leaderboard').classList.remove('visible');
+    document.getElementById('mobile-start').classList.add('visible');
+  };
+}
 </script>
 </div>
 </body>
