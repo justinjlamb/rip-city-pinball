@@ -58,20 +58,34 @@ A playable pinball game themed around the Moda Center. Uses pre-rendered Gemini 
 - Everything else is invisible physics aligned to the image
 - Collision layer system for ramps (playfield, left_ramp, right_ramp, launcher)
 
-**Current state (end of Apr 3 session):**
+**Current state (end of Apr 4 session):**
 - Gemini-generated table art with themed elements: "BOOKING REQUESTS" red translucent ramp, "EVENT DETAILS FORM" marquee (multiball scoop), Slack/Excel/Outlook/Momentus bumpers ✓
 - All visual overlays hidden (ramp, bumpers, scoop) — table image provides visuals, physics bodies are invisible ✓
 - Bumper radius increased to 60px to match table art ✓
 - Element positions aligned via element-editor.html to match new table art ✓
-- Flippers, multiball, ramp animation, scoring all functional ✓
+- Flippers redesigned: cream/off-white body (Blazers pinwheel tone), black border, red bezel, bolt removed. PADDLE_WIDTH=35. Hinges at y=2130 ✓
+- Multiball, ramp animation, scoring all functional ✓
 - Sound effects, attract mode, touch controls, debug mode all working ✓
+- Drop target scoring shows venue name: "PDR BOOKED! +750", completion shows "ALL ROOMS BOOKED!" ✓
+- Drop target label system coded (TARGET_LABELS array, lit/unlit state, flash on completion) — but Canvas rendering not good enough. Needs Gemini-generated tile images ✓
+
+**Drop target labels — IN PROGRESS:**
+- 6 labels: PDR, ROSE ROOM, SCR (left bank), GP, FOUNTAIN, WEYERHAEUSER (right bank)
+- Need 12 Gemini-generated PNGs: 6 unlit + 6 lit versions
+- Canvas 2D rendering attempted but quality gap too large vs photorealistic table art
+- Standalone sprite generation in Gemini also failed (produces office signage or blurry results)
+- Best path: generate tiles as part of a full table render where they match the existing art style, then crop them out. The tiles that looked best were always generated as part of the full table scene.
+- The lit tiles in reference images have warm amber/gold glow with backlit appearance — NOT tan wood labels
+- Code infrastructure ready: `TARGET_LABELS` array, `renderLabels()` function, image swap on hit, flash animation on completion. Just needs the actual image assets.
+- Current `renderLabels()` has Canvas placeholder rendering that should be replaced with image rendering once PNGs are ready.
 
 **What needs fine-tuning next:**
-1. **Image layering (depth illusion)** — Split table into background + foreground transparency so ball visually goes under the ramp during normal play (see "Next Up" section)
-2. **Flipper positions** — May need minor adjustments to overlay the image flippers
-3. **Physics body alignment** — Walls/curves need testing with gameplay
-4. **Game over screen** — Currently plain white text
-5. **Attract screen polish** — No Moda Center branding yet
+1. **Drop target label images** — Generate via Gemini as part of full table render, crop individual tiles
+2. **Image layering (depth illusion)** — Split table into background + foreground transparency so ball visually goes under the ramp during normal play (see "Next Up" section)
+3. **Flipper positions** — May need minor adjustments to overlay the image flippers
+4. **Physics body alignment** — Walls/curves need testing with gameplay
+5. **Game over screen** — Currently plain white text
+6. **Attract screen polish** — No Moda Center branding yet
 
 ### 3. Physics Editor (`physics-editor.html` — TOOL)
 Drag-and-drop visual editor for positioning physics bodies on the table image. Supports walls, bumpers, targets, curves (bezier with 3 control points), and flippers. "Copy Code" exports coordinates as JS.
@@ -97,8 +111,8 @@ const FLIP_UP_SPEED = 0.22;  // how fast flipper activates
 const FLIP_DN_SPEED = 0.10;  // how fast flipper returns to rest
 const LEFT_HINGE  = { x: 560,  y: 2200 };
 const RIGHT_HINGE = { x: 1120, y: 2200 };
-const PADDLE_LEN = 280;
-const PADDLE_WIDTH = 32;
+const PADDLE_LEN = 260;
+const PADDLE_WIDTH = 35;
 ```
 
 ## Layer System

@@ -128,21 +128,30 @@ async function loadData() {
   // Load interior contours (slingshots, outlane rails)
   interiorGroups = [];
   if (data.interiorVertices && data.interiorWalls) {
-    // Split interior vertices into separate contours
-    // Holes were traced sequentially: 24 verts each for slings, 30 each for outlanes
     const iv = data.interiorVertices;
+    const iw = data.interiorWalls;
     const colors = ['#ff6b6b', '#6bff6b', '#6b6bff', '#ffff6b'];
-    // Find contour boundaries by detecting large jumps between consecutive vertices
+    // Detect group boundaries by finding closing walls (endpoint goes back to an earlier vertex)
     let groupStart = 0;
-    for (let i = 1; i <= iv.length; i++) {
-      if (i === iv.length || Math.sqrt((iv[i][0]-iv[i-1][0])**2 + (iv[i][1]-iv[i-1][1])**2) > 200) {
-        const groupVerts = iv.slice(groupStart, i).map(([x, y]) => ({ x, y }));
+    for (let w = 0; w < iw.length; w++) {
+      const endX = iw[w][2], endY = iw[w][3];
+      // Check if this wall closes back to the group start vertex
+      if (endX === iv[groupStart][0] && endY === iv[groupStart][1] && w > groupStart) {
+        const groupVerts = iv.slice(groupStart, w + 1).map(([x, y]) => ({ x, y }));
         interiorGroups.push({
           vertices: groupVerts,
           color: colors[interiorGroups.length % colors.length],
         });
-        groupStart = i;
+        groupStart = w + 1;
       }
+    }
+    // Remaining vertices (e.g. open groups like marquee) that don't close back
+    if (groupStart < iv.length) {
+      const groupVerts = iv.slice(groupStart).map(([x, y]) => ({ x, y }));
+      interiorGroups.push({
+        vertices: groupVerts,
+        color: colors[interiorGroups.length % colors.length],
+      });
     }
   }
 

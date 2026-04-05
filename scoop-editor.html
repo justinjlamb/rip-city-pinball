@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scoop Editor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a1a; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; cursor: crosshair; }
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    background: rgba(0,0,0,0.9); padding: 8px 16px; display: flex; gap: 12px; align-items: center;
+    font-size: 13px; border-bottom: 1px solid #333;
+  }
+  #toolbar button {
+    padding: 6px 14px; border: 1px solid #555; background: #333; color: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 13px;
+  }
+  #toolbar button:hover { background: #444; }
+  #toolbar button.green { background: #2a6e2a; border-color: #4a4; }
+  #toolbar .sep { width: 1px; height: 24px; background: #444; }
+  #toolbar .info { color: #888; font-size: 12px; }
+  #code-panel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #222; border: 1px solid #555; border-radius: 8px; padding: 20px; z-index: 20;
+    max-width: 700px; width: 90%;
+  }
+  #code-panel textarea { width: 100%; height: 260px; background: #111; color: #0f0; border: 1px solid #444; font-family: monospace; font-size: 11px; padding: 8px; }
+  #code-panel button { margin-top: 10px; margin-right: 8px; padding: 6px 14px; border: 1px solid #555; background: #333; color: #fff; border-radius: 4px; cursor: pointer; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <strong>SCOOP EDITOR</strong>
+  <div class="sep"></div>
+  <button class="green" onclick="copyCode()">Copy Code</button>
+  <div class="sep"></div>
+  <span class="info" id="info">Drag: scoop (gold), wall verts (red), arrow tips (colored)</span>
+  <div class="sep"></div>
+  <span class="info" id="coords"></span>
+</div>
+<canvas id="C"></canvas>
+<div id="overlay" onclick="closeCode()"></div>
+<div id="code-panel">
+  <h3 style="margin-bottom:10px">Updated Code</h3>
+  <textarea id="code-text" readonly></textarea>
+  <button onclick="navigator.clipboard.writeText(document.getElementById('code-text').value); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1000)">Copy</button>
+  <button onclick="closeCode()">Close</button>
+</div>
+
+<script>
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+
+const IMG_W = 1694, IMG_H = 2376;
+const tableImg = new Image();
+tableImg.src = 'table-layer0.png';
+tableImg.onload = () => render();
+
+// View region (image coords) — zoomed to scoop area
+const VIEW = { x: 80, y: 250, w: 600, h: 550 };
+
+// Scoop
+const scoop = { x: 387, y: 649, r: 35 };
+
+// Marquee wall vertices (open contour)
+const wallVerts = [
+  {x:336,y:754},{x:321,y:730},{x:320,y:700},{x:322,y:664},{x:337,y:629},
+  {x:350,y:617},{x:365,y:605},{x:377,y:601},{x:393,y:599},{x:409,y:600},
+  {x:424,y:606},{x:441,y:613},{x:457,y:623},{x:467,y:629},{x:479,y:643}
+];
+
+// Ejection arrows: original ball + 3 multiball
+const ARROW_LEN = 120; // visual length in image coords
+const ejections = [
+  { label: 'Original', color: '#FFD700', vx: -0.2, vy: 21.6 },
+  { label: 'Multi 1', color: '#ff6b6b', angle: 0.314, speed: 20 },
+  { label: 'Multi 2', color: '#6bff6b', angle: 1.181, speed: 20 },
+  { label: 'Multi 3', color: '#6b6bff', angle: 0.731, speed: 20 },
+];
+
+// Compute arrow endpoints from velocities
+function getArrowEnd(ej) {
+  let vx, vy;
+  if (ej.vx !== undefined) {
+    vx = ej.vx; vy = ej.vy;
+  } else {
+    vx = Math.cos(ej.angle) * ej.speed;
+    vy = Math.sin(ej.angle) * ej.speed;
+  }
+  const mag = Math.sqrt(vx*vx + vy*vy);
+  return { x: scoop.x + (vx/mag) * ARROW_LEN, y: scoop.y + (vy/mag) * ARROW_LEN };
+}
+
+function setArrowFromEnd(ej, ex, ey) {
+  const dx = ex - scoop.x, dy = ey - scoop.y;
+  const mag = Math.sqrt(dx*dx + dy*dy);
+  if (mag < 1) return;
+  if (ej.vx !== undefined) {
+    // Keep magnitude, change direction
+    const origMag = Math.sqrt(ej.vx*ej.vx + ej.vy*ej.vy);
+    ej.vx = (dx/mag) * origMag;
+    ej.vy = (dy/mag) * origMag;
+  } else {
+    ej.angle = Math.atan2(-dy, dx); // negate dy because vy is negative for upward
+    // Recalculate: the code uses -Math.abs(Math.sin(a)) for vy
+    // So we store the raw angle and let the game code handle it
+    const rawAngle = Math.atan2(dy, dx);
+    ej.angle = rawAngle;
+  }
+}
+
+// Coordinate transforms
+let scale, offX, offY;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight - 40;
+  canvas.style.marginTop = '40px';
+  scale = Math.min(canvas.width / VIEW.w, canvas.height / VIEW.h);
+  offX = (canvas.width - VIEW.w * scale) / 2;
+  offY = (canvas.height - VIEW.h * scale) / 2;
+  render();
+}
+function toScreen(ix, iy) { return [(ix - VIEW.x) * scale + offX, (iy - VIEW.y) * scale + offY]; }
+function toImage(sx, sy) { return [(sx - offX) / scale + VIEW.x, (sy - offY) / scale + VIEW.y]; }
+function ps(s) { return s * scale; }
+
+window.addEventListener('resize', resize);
+resize();
+
+// Dragging
+let dragging = null; // {type, index}
+const GRAB_R = 15;
+
+function findTarget(ix, iy) {
+  // Check arrow tips first (smallest targets)
+  for (let i = 0; i < ejections.length; i++) {
+    const end = getArrowEnd(ejections[i]);
+    if (Math.hypot(end.x - ix, end.y - iy) < GRAB_R) return { type: 'arrow', index: i };
+  }
+  // Check wall verts
+  for (let i = 0; i < wallVerts.length; i++) {
+    if (Math.hypot(wallVerts[i].x - ix, wallVerts[i].y - iy) < GRAB_R) return { type: 'wall', index: i };
+  }
+  // Check scoop
+  if (Math.hypot(scoop.x - ix, scoop.y - iy) < scoop.r + 10) return { type: 'scoop', index: 0 };
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const [ix, iy] = toImage(e.offsetX, e.offsetY);
+  dragging = findTarget(ix, iy);
+});
+
+canvas.addEventListener('mousemove', e => {
+  const [ix, iy] = toImage(e.offsetX, e.offsetY);
+  document.getElementById('coords').textContent = `(${Math.round(ix)}, ${Math.round(iy)})`;
+
+  if (!dragging) {
+    canvas.style.cursor = findTarget(ix, iy) ? 'grab' : 'crosshair';
+    return;
+  }
+  canvas.style.cursor = 'grabbing';
+
+  if (dragging.type === 'scoop') {
+    scoop.x = Math.round(ix); scoop.y = Math.round(iy);
+  } else if (dragging.type === 'wall') {
+    wallVerts[dragging.index].x = Math.round(ix);
+    wallVerts[dragging.index].y = Math.round(iy);
+  } else if (dragging.type === 'arrow') {
+    setArrowFromEnd(ejections[dragging.index], ix, iy);
+  }
+  render();
+});
+
+canvas.addEventListener('mouseup', () => { dragging = null; });
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Table art
+  if (tableImg.complete) {
+    const [sx, sy] = toScreen(VIEW.x, VIEW.y);
+    ctx.drawImage(tableImg,
+      VIEW.x, VIEW.y, VIEW.w, VIEW.h,
+      sx, sy, VIEW.w * scale, VIEW.h * scale
+    );
+  }
+
+  // Wall contour (open)
+  ctx.beginPath();
+  const [wx0, wy0] = toScreen(wallVerts[0].x, wallVerts[0].y);
+  ctx.moveTo(wx0, wy0);
+  for (let i = 1; i < wallVerts.length; i++) {
+    const [wx, wy] = toScreen(wallVerts[i].x, wallVerts[i].y);
+    ctx.lineTo(wx, wy);
+  }
+  ctx.strokeStyle = '#ff4444';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Gap indicator (dashed)
+  const [gx1, gy1] = toScreen(wallVerts[wallVerts.length-1].x, wallVerts[wallVerts.length-1].y);
+  ctx.beginPath();
+  ctx.moveTo(gx1, gy1);
+  ctx.lineTo(wx0, wy0);
+  ctx.setLineDash([6, 6]);
+  ctx.strokeStyle = 'rgba(255,255,0,0.4)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Wall vertices
+  for (let i = 0; i < wallVerts.length; i++) {
+    const [vx, vy] = toScreen(wallVerts[i].x, wallVerts[i].y);
+    ctx.beginPath();
+    ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff4444';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px monospace';
+    ctx.fillText(i.toString(), vx + 8, vy - 4);
+  }
+
+  // Scoop circle
+  const [sx, sy] = toScreen(scoop.x, scoop.y);
+  ctx.beginPath();
+  ctx.arc(sx, sy, scoop.r * scale, 0, Math.PI * 2);
+  ctx.strokeStyle = '#FFD700';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255, 215, 0, 0.15)';
+  ctx.fill();
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 12px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('SCOOP', sx, sy - ps(scoop.r) - 8);
+  ctx.textAlign = 'left';
+
+  // Ejection arrows
+  for (let i = 0; i < ejections.length; i++) {
+    const ej = ejections[i];
+    const end = getArrowEnd(ej);
+    const [ax1, ay1] = toScreen(scoop.x, scoop.y);
+    const [ax2, ay2] = toScreen(end.x, end.y);
+
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(ax1, ay1);
+    ctx.lineTo(ax2, ay2);
+    ctx.strokeStyle = ej.color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Arrowhead
+    const angle = Math.atan2(ay2 - ay1, ax2 - ax1);
+    ctx.beginPath();
+    ctx.moveTo(ax2, ay2);
+    ctx.lineTo(ax2 - 14 * Math.cos(angle - 0.4), ay2 - 14 * Math.sin(angle - 0.4));
+    ctx.lineTo(ax2 - 14 * Math.cos(angle + 0.4), ay2 - 14 * Math.sin(angle + 0.4));
+    ctx.closePath();
+    ctx.fillStyle = ej.color;
+    ctx.fill();
+
+    // Drag handle
+    ctx.beginPath();
+    ctx.arc(ax2, ay2, 7, 0, Math.PI * 2);
+    ctx.fillStyle = ej.color;
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = ej.color;
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText(ej.label, ax2 + 12, ay2 + 4);
+  }
+}
+
+function copyCode() {
+  const ej = ejections;
+  // Original ball velocity
+  const origVx = ej[0].vx.toFixed(1);
+  const origVy = ej[0].vy.toFixed(1);
+
+  // Multiball angles
+  const angles = [ej[1].angle.toFixed(3), ej[2].angle.toFixed(3), ej[3].angle.toFixed(3)];
+
+  // Wall vertices
+  const vStr = wallVerts.map(v => `    [${v.x}, ${v.y}]`).join(',\n');
+
+  const code = `// ── SCOOP POSITION ──
+createScoop(${scoop.x}, ${scoop.y});
+
+// ── ORIGINAL BALL EJECTION (in triggerMultiball phase 3) ──
+Body.setVelocity(ball, { x: ${origVx}, y: ${origVy} });
+
+// ── MULTIBALL EJECTION ANGLES ──
+const angles = [${angles.join(', ')}];
+
+// ── MARQUEE WALL VERTICES (for wall-data.json interiorVertices) ──
+[
+${vStr}
+]`;
+
+  document.getElementById('code-text').value = code;
+  document.getElementById('code-panel').style.display = 'block';
+  document.getElementById('overlay').style.display = 'block';
+}
+
+function closeCode() {
+  document.getElementById('code-panel').style.display = 'none';
+  document.getElementById('overlay').style.display = 'none';
+}
+</script>
+</body>
+</html>
