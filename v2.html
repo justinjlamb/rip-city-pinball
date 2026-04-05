@@ -1496,6 +1496,7 @@ document.addEventListener('keyup', e => {
 // Touch: left half = left flipper, right half = right flipper
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  initAudio(); // Must be called inside touch gesture for iOS
   if (gameState === 'gameover') return;
   if (gameState === 'attract') { startGame(); return; }
   if (gameState === 'launch') { plungerCharging = true; return; }
