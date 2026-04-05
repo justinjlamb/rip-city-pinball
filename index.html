@@ -505,18 +505,21 @@ let audioCtx;
 let audioReady = false;
 
 function initAudio() {
-  if (audioCtx) {
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().then(() => { audioReady = true; });
-    }
-    return;
-  }
+  if (audioReady) return;
   try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    audioReady = audioCtx.state === 'running';
-    if (!audioReady) {
-      audioCtx.resume().then(() => { audioReady = true; });
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
+    // iOS Safari requires resume() + playing a buffer inside a user gesture
+    audioCtx.resume().then(() => {
+      // Play a silent buffer to fully unlock the audio pipeline on iOS
+      const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.start(0);
+      audioReady = true;
+    }).catch(e => { console.warn('Audio resume failed:', e.message); });
   } catch(e) { console.warn('Audio:', e.message); }
 }
 
