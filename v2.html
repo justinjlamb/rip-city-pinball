@@ -160,6 +160,16 @@ let litImageLoaded = false;
 tableLitImg.onload = () => { litImageLoaded = true; };
 tableLitImg.onerror = () => { console.warn('table-lit.png failed to load — lit labels will not render'); };
 
+const tableOverlayImg = new Image();
+tableOverlayImg.src = 'table-overlay.png';
+let overlayLoaded = false;
+tableOverlayImg.onload = () => { overlayLoaded = true; };
+
+const rampOverlayImg = new Image();
+rampOverlayImg.src = 'table-ramp-overlay.png';
+let rampOverlayLoaded = false;
+rampOverlayImg.onload = () => { rampOverlayLoaded = true; };
+
 // Crop rectangles for each label's glow region (in image pixel coords)
 // Cut at midpoints between adjacent labels to avoid glow overlap
 const LABEL_CROPS = [
@@ -2168,46 +2178,6 @@ function render() {
     ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
   }
 
-  // Ball on ramp (chrome steel, same as main ball)
-  if (rampAnimating && rampBall) {
-    const bx = px(rampBall.position.x), by = py(rampBall.position.y);
-    const br = ps(BALL_RADIUS);
-    const isMain = rampBall === ball || !ball;
-    if (isMain) {
-      // Chrome steel (same rendering as main ball)
-      const bshd = ctx.createRadialGradient(bx + ps(1.5), by + ps(3), br * 0.5, bx + ps(1.5), by + ps(3), br * 1.6);
-      bshd.addColorStop(0, 'rgba(0,0,0,0.35)'); bshd.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = bshd; ctx.beginPath(); ctx.arc(bx + ps(1.5), by + ps(3), br * 1.6, 0, Math.PI * 2); ctx.fill();
-      const bgrad = ctx.createRadialGradient(bx - br * 0.25, by - br * 0.25, br * 0.1, bx, by, br);
-      bgrad.addColorStop(0, '#f0f0f4'); bgrad.addColorStop(0.25, '#d0d0d8');
-      bgrad.addColorStop(0.5, '#a0a0a8'); bgrad.addColorStop(0.75, '#707078');
-      bgrad.addColorStop(0.92, '#505058'); bgrad.addColorStop(1, '#383840');
-      ctx.fillStyle = bgrad; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
-      const bspec = ctx.createRadialGradient(bx - br * 0.35, by - br * 0.35, 0, bx - br * 0.35, by - br * 0.35, br * 0.4);
-      bspec.addColorStop(0, 'rgba(255,255,255,0.9)'); bspec.addColorStop(0.3, 'rgba(255,255,255,0.5)');
-      bspec.addColorStop(0.6, 'rgba(255,255,255,0.12)'); bspec.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = bspec; ctx.beginPath(); ctx.arc(bx - br * 0.35, by - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = ps(0.5);
-      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
-    } else {
-      // Multiball extra on ramp (metallic gold)
-      const gshd = ctx.createRadialGradient(bx + ps(1.5), by + ps(3), br * 0.5, bx + ps(1.5), by + ps(3), br * 1.6);
-      gshd.addColorStop(0, 'rgba(0,0,0,0.35)'); gshd.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = gshd; ctx.beginPath(); ctx.arc(bx + ps(1.5), by + ps(3), br * 1.6, 0, Math.PI * 2); ctx.fill();
-      const ggrad = ctx.createRadialGradient(bx - br * 0.25, by - br * 0.25, br * 0.1, bx, by, br);
-      ggrad.addColorStop(0, '#fff8e0'); ggrad.addColorStop(0.2, '#ffd740');
-      ggrad.addColorStop(0.45, '#c8a020'); ggrad.addColorStop(0.7, '#8a6e10');
-      ggrad.addColorStop(0.9, '#5a4408'); ggrad.addColorStop(1, '#3a2a04');
-      ctx.fillStyle = ggrad; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
-      const gspec = ctx.createRadialGradient(bx - br * 0.35, by - br * 0.35, 0, bx - br * 0.35, by - br * 0.35, br * 0.4);
-      gspec.addColorStop(0, 'rgba(255,255,240,0.9)'); gspec.addColorStop(0.3, 'rgba(255,245,200,0.5)');
-      gspec.addColorStop(0.6, 'rgba(255,230,150,0.12)'); gspec.addColorStop(1, 'rgba(255,220,100,0)');
-      ctx.fillStyle = gspec; ctx.beginPath(); ctx.arc(bx - br * 0.35, by - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(60,40,0,0.25)'; ctx.lineWidth = ps(0.5);
-      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
-    }
-  }
-
   // Multiball extra balls (metallic gold)
   for (const mb of multiballs) {
     const bx = px(mb.position.x), by = py(mb.position.y);
@@ -2234,6 +2204,54 @@ function render() {
     // Rim
     ctx.strokeStyle = 'rgba(60,40,0,0.25)'; ctx.lineWidth = ps(0.5);
     ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // Overlays — elevated playfield elements drawn after balls for depth
+  if (overlayLoaded) {
+    ctx.drawImage(tableOverlayImg, offX, offY, IMG_W * scale, IMG_H * scale);
+  }
+  if (rampOverlayLoaded) {
+    ctx.globalAlpha = 0.65;
+    ctx.drawImage(rampOverlayImg, offX, offY, IMG_W * scale, IMG_H * scale);
+    ctx.globalAlpha = 1.0;
+  }
+
+  // Ball on ramp — drawn AFTER overlays so it appears on top of the ramp chrome
+  if (rampAnimating && rampBall) {
+    const bx = px(rampBall.position.x), by = py(rampBall.position.y);
+    const br = ps(BALL_RADIUS);
+    const isMain = rampBall === ball || !ball;
+    if (isMain) {
+      const bshd = ctx.createRadialGradient(bx + ps(1.5), by + ps(3), br * 0.5, bx + ps(1.5), by + ps(3), br * 1.6);
+      bshd.addColorStop(0, 'rgba(0,0,0,0.35)'); bshd.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = bshd; ctx.beginPath(); ctx.arc(bx + ps(1.5), by + ps(3), br * 1.6, 0, Math.PI * 2); ctx.fill();
+      const bgrad = ctx.createRadialGradient(bx - br * 0.25, by - br * 0.25, br * 0.1, bx, by, br);
+      bgrad.addColorStop(0, '#f0f0f4'); bgrad.addColorStop(0.25, '#d0d0d8');
+      bgrad.addColorStop(0.5, '#a0a0a8'); bgrad.addColorStop(0.75, '#707078');
+      bgrad.addColorStop(0.92, '#505058'); bgrad.addColorStop(1, '#383840');
+      ctx.fillStyle = bgrad; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+      const bspec = ctx.createRadialGradient(bx - br * 0.35, by - br * 0.35, 0, bx - br * 0.35, by - br * 0.35, br * 0.4);
+      bspec.addColorStop(0, 'rgba(255,255,255,0.9)'); bspec.addColorStop(0.3, 'rgba(255,255,255,0.5)');
+      bspec.addColorStop(0.6, 'rgba(255,255,255,0.12)'); bspec.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = bspec; ctx.beginPath(); ctx.arc(bx - br * 0.35, by - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = ps(0.5);
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      const gshd = ctx.createRadialGradient(bx + ps(1.5), by + ps(3), br * 0.5, bx + ps(1.5), by + ps(3), br * 1.6);
+      gshd.addColorStop(0, 'rgba(0,0,0,0.35)'); gshd.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gshd; ctx.beginPath(); ctx.arc(bx + ps(1.5), by + ps(3), br * 1.6, 0, Math.PI * 2); ctx.fill();
+      const ggrad = ctx.createRadialGradient(bx - br * 0.25, by - br * 0.25, br * 0.1, bx, by, br);
+      ggrad.addColorStop(0, '#fff8e0'); ggrad.addColorStop(0.2, '#ffd740');
+      ggrad.addColorStop(0.45, '#c8a020'); ggrad.addColorStop(0.7, '#8a6e10');
+      ggrad.addColorStop(0.9, '#5a4408'); ggrad.addColorStop(1, '#3a2a04');
+      ctx.fillStyle = ggrad; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+      const gspec = ctx.createRadialGradient(bx - br * 0.35, by - br * 0.35, 0, bx - br * 0.35, by - br * 0.35, br * 0.4);
+      gspec.addColorStop(0, 'rgba(255,255,240,0.9)'); gspec.addColorStop(0.3, 'rgba(255,245,200,0.5)');
+      gspec.addColorStop(0.6, 'rgba(255,230,150,0.12)'); gspec.addColorStop(1, 'rgba(255,220,100,0)');
+      ctx.fillStyle = gspec; ctx.beginPath(); ctx.arc(bx - br * 0.35, by - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(60,40,0,0.25)'; ctx.lineWidth = ps(0.5);
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
+    }
   }
 
   // Flippers

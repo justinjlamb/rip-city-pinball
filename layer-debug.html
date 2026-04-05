@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Layer Debugger</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #fff; font-family: system-ui, sans-serif; padding: 1rem; }
+  h1 { font-size: 1.2rem; margin-bottom: 1rem; color: #FFD700; }
+  .controls { display: flex; gap: 1rem; margin-bottom: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .layer-toggle { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; background: #222; border: 2px solid #444; border-radius: 6px; cursor: pointer; user-select: none; font-size: 0.85rem; }
+  .layer-toggle.active { border-color: #FFD700; background: #2a2a1a; }
+  .layer-toggle .swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #666; }
+  .canvas-wrap { position: relative; display: inline-block; }
+  canvas { display: block; max-height: 80vh; border: 1px solid #333; }
+  .ball-controls { display: flex; gap: 0.5rem; align-items: center; }
+  .ball-controls label { font-size: 0.85rem; color: #aaa; }
+  .ball-controls input { width: 80px; }
+  #info { font-size: 0.8rem; color: #888; margin-top: 0.5rem; }
+  .toolbar { display: flex; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+  .tool-btn { padding: 0.4rem 1rem; background: #222; border: 2px solid #444; border-radius: 6px; cursor: pointer; color: #ccc; font-size: 0.85rem; font-family: system-ui; }
+  .tool-btn.active { border-color: #6bff6b; background: #1a2a1a; color: #6bff6b; }
+  .tool-btn:hover { border-color: #666; }
+  .tool-btn.danger { border-color: #633; }
+  .tool-btn.danger:hover { border-color: #C8102E; color: #ff6b6b; }
+  .wall-count { font-size: 0.8rem; color: #6bff6b; }
+  #wall-output { display: none; position: fixed; top: 10%; left: 10%; right: 10%; bottom: 10%; background: #1a1a1a; border: 2px solid #FFD700; border-radius: 8px; padding: 1.5rem; z-index: 100; }
+  #wall-output textarea { width: 100%; height: calc(100% - 3rem); background: #111; color: #6bff6b; border: 1px solid #333; font-family: monospace; font-size: 0.9rem; padding: 1rem; resize: none; }
+  #wall-output .close-btn { position: absolute; top: 0.8rem; right: 1rem; cursor: pointer; color: #888; font-size: 1.2rem; }
+</style>
+</head>
+<body>
+<h1>LAYER DEBUGGER</h1>
+<div class="controls">
+  <div class="layer-toggle active" data-layer="bg" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#8B7355;"></span> Background
+  </div>
+  <div class="layer-toggle active" data-layer="ball" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#ccc;"></span> Ball
+  </div>
+  <div class="layer-toggle active" data-layer="overlay" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#C8102E;"></span> Marquee
+  </div>
+  <div class="layer-toggle active" data-layer="ramp" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#8B4513;"></span> Ramp
+  </div>
+  <div class="layer-toggle" data-layer="lit" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#FFD700;"></span> Lit Labels
+  </div>
+  <div class="layer-toggle active" data-layer="walls" onclick="toggleLayer(this)">
+    <span class="swatch" style="background:#6bff6b;"></span> Walls
+  </div>
+  <span style="color:#666;">|</span>
+  <div class="ball-controls">
+    <label>Ball size:</label>
+    <input type="range" id="ball-size" min="10" max="40" value="22">
+  </div>
+</div>
+<div class="toolbar">
+  <button class="tool-btn" id="btn-ball" onclick="setMode('ball')">🎱 Ball Mode</button>
+  <button class="tool-btn" id="btn-draw" onclick="setMode('draw')">✏️ Draw Walls</button>
+  <button class="tool-btn" id="btn-move" onclick="setMode('move')">✋ Move Points</button>
+  <button class="tool-btn" id="btn-delete" onclick="setMode('delete')">✂️ Delete Point</button>
+  <button class="tool-btn danger" onclick="undoLastPoint()">↩ Undo</button>
+  <button class="tool-btn danger" onclick="deleteLastGroup()">🗑 Delete Last Group</button>
+  <button class="tool-btn" onclick="newGroup()">➕ New Group</button>
+  <button class="tool-btn" style="border-color:#FFD700;color:#FFD700;" onclick="exportWalls()">📋 Copy Walls</button>
+  <span class="wall-count" id="wall-count"></span>
+</div>
+<div class="canvas-wrap">
+  <canvas id="C"></canvas>
+</div>
+<div id="info">Ball mode: drag the ball. Press W to toggle wall drawing.</div>
+<div id="wall-output">
+  <span class="close-btn" onclick="document.getElementById('wall-output').style.display='none'">✕</span>
+  <textarea id="wall-text" readonly></textarea>
+</div>
+
+<script>
+const canvas = document.getElementById('C');
+const ctx = canvas.getContext('2d');
+
+const IMG_W = 1694, IMG_H = 2376;
+const DISPLAY_H = Math.min(window.innerHeight * 0.78, 900);
+const scl = DISPLAY_H / IMG_H;
+const DISPLAY_W = IMG_W * scl;
+canvas.width = DISPLAY_W;
+canvas.height = DISPLAY_H;
+
+// Load images
+const bgImg = new Image();
+bgImg.src = 'table-layer0.png';
+const overlayImg = new Image();
+overlayImg.src = 'table-overlay.png';
+const rampImg = new Image();
+rampImg.src = 'table-ramp-overlay.png';
+const litImg = new Image();
+litImg.src = 'table-lit.png';
+
+let loaded = 0;
+function onLoad() { loaded++; if (loaded >= 4) render(); }
+bgImg.onload = onLoad;
+overlayImg.onload = onLoad;
+rampImg.onload = onLoad;
+litImg.onload = onLoad;
+
+// State
+let ballX = 350 * scl, ballY = 550 * scl;
+let dragging = false;
+let mode = 'ball'; // 'ball', 'draw', 'move', 'delete'
+let movingIdx = null; // {group, point}
+
+const layers = { bg: true, ball: true, overlay: true, ramp: true, lit: false, walls: true };
+
+// Wall groups — each group is an array of {x, y} in IMAGE coords
+let wallGroups = [[]];
+let activeGroup = 0;
+
+const WALL_COLORS = ['#6bff6b', '#ff6b6b', '#6b6bff', '#ffff6b', '#ff6bff', '#6bffff'];
+
+function toImg(sx, sy) { return { x: Math.round(sx / scl), y: Math.round(sy / scl) }; }
+function toScreen(ix, iy) { return { x: ix * scl, y: iy * scl }; }
+
+function toggleLayer(el) {
+  const layer = el.dataset.layer;
+  layers[layer] = !layers[layer];
+  el.classList.toggle('active');
+  render();
+}
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('btn-' + m);
+  if (btn) btn.classList.add('active');
+  canvas.style.cursor = m === 'draw' ? 'crosshair' : m === 'move' ? 'grab' : m === 'delete' ? 'not-allowed' : 'default';
+  updateInfo();
+  render();
+}
+
+function newGroup() {
+  if (wallGroups[activeGroup].length === 0) return; // don't add empty groups
+  wallGroups.push([]);
+  activeGroup = wallGroups.length - 1;
+  updateWallCount();
+  render();
+}
+
+function undoLastPoint() {
+  if (wallGroups[activeGroup].length > 0) {
+    wallGroups[activeGroup].pop();
+  } else if (wallGroups.length > 1) {
+    wallGroups.pop();
+    activeGroup = wallGroups.length - 1;
+  }
+  updateWallCount();
+  render();
+}
+
+function deleteLastGroup() {
+  if (wallGroups.length > 1) {
+    wallGroups.pop();
+    activeGroup = wallGroups.length - 1;
+  } else {
+    wallGroups = [[]];
+    activeGroup = 0;
+  }
+  updateWallCount();
+  render();
+}
+
+function findNearestPoint(sx, sy, threshold) {
+  let best = null, bestDist = threshold;
+  for (let g = 0; g < wallGroups.length; g++) {
+    for (let p = 0; p < wallGroups[g].length; p++) {
+      const s = toScreen(wallGroups[g][p].x, wallGroups[g][p].y);
+      const d = Math.sqrt((s.x - sx) ** 2 + (s.y - sy) ** 2);
+      if (d < bestDist) { bestDist = d; best = { group: g, point: p }; }
+    }
+  }
+  return best;
+}
+
+function updateWallCount() {
+  const total = wallGroups.reduce((s, g) => s + g.length, 0);
+  const segments = wallGroups.reduce((s, g) => s + Math.max(0, g.length - 1), 0);
+  document.getElementById('wall-count').textContent =
+    `${wallGroups.length} group${wallGroups.length > 1 ? 's' : ''} · ${total} points · ${segments} walls`;
+}
+
+function updateInfo() {
+  const msgs = {
+    ball: 'Ball mode: click or drag the ball around the table.',
+    draw: 'Draw mode: click to place wall points. They connect in order. Press N for new group.',
+    move: 'Move mode: drag any wall point to reposition it.',
+    delete: 'Delete mode: click a wall point to remove it.',
+  };
+  document.getElementById('info').textContent = msgs[mode] || '';
+}
+
+function exportWalls() {
+  // Export as arrays for wall-data.json
+  const groups = wallGroups.filter(g => g.length >= 2);
+  if (groups.length === 0) { alert('No walls to export (need at least 2 points per group).'); return; }
+
+  let out = '// Ramp walls — paste into wall-data.json interiorVertices + interiorWalls\n\n';
+  out += '// Vertices (append to interiorVertices array):\n';
+  for (let g = 0; g < groups.length; g++) {
+    out += `// Group ${g + 1} (${groups[g].length} points, ${groups[g].length - 1} walls)\n`;
+    for (const p of groups[g]) {
+      out += `[${p.x}, ${p.y}],\n`;
+    }
+  }
+  out += '\n// Walls (append to interiorWalls array):\n';
+  for (let g = 0; g < groups.length; g++) {
+    out += `// Group ${g + 1}\n`;
+    for (let i = 0; i < groups[g].length - 1; i++) {
+      const a = groups[g][i], b = groups[g][i + 1];
+      out += `[${a.x}, ${a.y}, ${b.x}, ${b.y}],\n`;
+    }
+  }
+
+  document.getElementById('wall-text').value = out;
+  document.getElementById('wall-output').style.display = 'block';
+  document.getElementById('wall-text').select();
+  navigator.clipboard.writeText(out).catch(() => {});
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Checkerboard
+  const sz = 10;
+  for (let y = 0; y < canvas.height; y += sz) {
+    for (let x = 0; x < canvas.width; x += sz) {
+      ctx.fillStyle = ((x/sz + y/sz) % 2 === 0) ? '#1a1a1a' : '#222';
+      ctx.fillRect(x, y, sz, sz);
+    }
+  }
+
+  if (layers.bg) ctx.drawImage(bgImg, 0, 0, DISPLAY_W, DISPLAY_H);
+  if (layers.lit) ctx.drawImage(litImg, 0, 0, DISPLAY_W, DISPLAY_H);
+
+  // Ball
+  if (layers.ball) {
+    const br = parseInt(document.getElementById('ball-size').value) * scl / 2;
+    ctx.beginPath();
+    ctx.arc(ballX + 2, ballY + 3, br * 1.4, 0, Math.PI * 2);
+    const shd = ctx.createRadialGradient(ballX + 2, ballY + 3, br * 0.3, ballX + 2, ballY + 3, br * 1.4);
+    shd.addColorStop(0, 'rgba(0,0,0,0.4)'); shd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = shd; ctx.fill();
+    const grad = ctx.createRadialGradient(ballX - br * 0.3, ballY - br * 0.3, br * 0.1, ballX, ballY, br);
+    grad.addColorStop(0, '#f0f0f4'); grad.addColorStop(0.3, '#d0d0d8');
+    grad.addColorStop(0.6, '#a0a0a8'); grad.addColorStop(0.85, '#606068'); grad.addColorStop(1, '#383840');
+    ctx.beginPath(); ctx.arc(ballX, ballY, br, 0, Math.PI * 2); ctx.fillStyle = grad; ctx.fill();
+    const spec = ctx.createRadialGradient(ballX - br * 0.35, ballY - br * 0.35, 0, ballX - br * 0.35, ballY - br * 0.35, br * 0.4);
+    spec.addColorStop(0, 'rgba(255,255,255,0.9)'); spec.addColorStop(0.4, 'rgba(255,255,255,0.3)'); spec.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.beginPath(); ctx.arc(ballX - br * 0.35, ballY - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fillStyle = spec; ctx.fill();
+    ctx.beginPath(); ctx.arc(ballX, ballY, br, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 0.5; ctx.stroke();
+  }
+
+  if (layers.overlay) ctx.drawImage(overlayImg, 0, 0, DISPLAY_W, DISPLAY_H);
+  if (layers.ramp) ctx.drawImage(rampImg, 0, 0, DISPLAY_W, DISPLAY_H);
+
+  // Walls
+  if (layers.walls) {
+    for (let g = 0; g < wallGroups.length; g++) {
+      const grp = wallGroups[g];
+      if (grp.length === 0) continue;
+      const color = WALL_COLORS[g % WALL_COLORS.length];
+      const isActive = g === activeGroup;
+
+      // Lines
+      if (grp.length > 1) {
+        ctx.beginPath();
+        const s0 = toScreen(grp[0].x, grp[0].y);
+        ctx.moveTo(s0.x, s0.y);
+        for (let i = 1; i < grp.length; i++) {
+          const s = toScreen(grp[i].x, grp[i].y);
+          ctx.lineTo(s.x, s.y);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isActive ? 3 : 1.5;
+        ctx.globalAlpha = isActive ? 1 : 0.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // Vertices
+      for (let p = 0; p < grp.length; p++) {
+        const s = toScreen(grp[p].x, grp[p].y);
+        const r = isActive ? 6 : 4;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? color : 'rgba(255,255,255,0.4)';
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Label first/last
+        if (isActive && (p === 0 || p === grp.length - 1)) {
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px system-ui';
+          ctx.fillText(p === 0 ? 'START' : 'END', s.x + 8, s.y - 4);
+        }
+      }
+    }
+  }
+
+  updateWallCount();
+}
+
+// Input
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (mode === 'ball') {
+    const dx = mx - ballX, dy = my - ballY;
+    if (Math.sqrt(dx*dx + dy*dy) < 30) {
+      dragging = true;
+    } else {
+      ballX = mx; ballY = my; render();
+    }
+  } else if (mode === 'draw') {
+    const img = toImg(mx, my);
+    wallGroups[activeGroup].push(img);
+    render();
+  } else if (mode === 'move') {
+    const hit = findNearestPoint(mx, my, 15);
+    if (hit) { movingIdx = hit; canvas.style.cursor = 'grabbing'; }
+  } else if (mode === 'delete') {
+    const hit = findNearestPoint(mx, my, 15);
+    if (hit) {
+      wallGroups[hit.group].splice(hit.point, 1);
+      if (wallGroups[hit.group].length === 0 && wallGroups.length > 1) {
+        wallGroups.splice(hit.group, 1);
+        activeGroup = Math.min(activeGroup, wallGroups.length - 1);
+      }
+      render();
+    }
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (mode === 'ball' && dragging) {
+    ballX = mx; ballY = my; render();
+  } else if (mode === 'move' && movingIdx) {
+    const img = toImg(mx, my);
+    wallGroups[movingIdx.group][movingIdx.point] = img;
+    render();
+  } else if (mode === 'draw') {
+    // Preview line from last point to cursor
+    render();
+    const grp = wallGroups[activeGroup];
+    if (grp.length > 0) {
+      const last = toScreen(grp[grp.length - 1].x, grp[grp.length - 1].y);
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(mx, my);
+      ctx.strokeStyle = 'rgba(107, 255, 107, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+});
+
+canvas.addEventListener('mouseup', () => {
+  dragging = false;
+  if (movingIdx) { movingIdx = null; canvas.style.cursor = 'grab'; }
+});
+canvas.addEventListener('mouseleave', () => { dragging = false; movingIdx = null; });
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'w' || e.key === 'W') setMode(mode === 'draw' ? 'ball' : 'draw');
+  if (e.key === 'n' || e.key === 'N') newGroup();
+  if (e.key === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); undoLastPoint(); }
+  if (e.key === 'Escape') {
+    document.getElementById('wall-output').style.display = 'none';
+    setMode('ball');
+  }
+  // Switch active group with number keys
+  if (e.key >= '1' && e.key <= '9') {
+    const idx = parseInt(e.key) - 1;
+    if (idx < wallGroups.length) { activeGroup = idx; render(); }
+  }
+});
+
+document.getElementById('ball-size').addEventListener('input', render);
+setMode('ball');
+</script>
+</body>
+</html>
