@@ -789,11 +789,17 @@ const SPRING_DAMPING = 5;
 let scale = 1, offX = 0, offY = 0;
 function resize() {
   const col = document.getElementById('game-col');
-  canvas.width = col.clientWidth;
-  canvas.height = col.clientHeight;
-  scale = Math.min(canvas.width / IMG_W, canvas.height / IMG_H);
-  offX = (canvas.width - IMG_W * scale) / 2;
-  offY = (canvas.height - IMG_H * scale) / 2;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = col.clientWidth;
+  const cssH = col.clientHeight;
+  canvas.width = cssW * dpr;
+  canvas.height = cssH * dpr;
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  scale = Math.min(cssW / IMG_W, cssH / IMG_H);
+  offX = (cssW - IMG_W * scale) / 2;
+  offY = (cssH - IMG_H * scale) / 2;
 }
 window.addEventListener('resize', resize);
 resize();
@@ -1500,8 +1506,9 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
   if (plungerCharging) { launchBall(); return; }
+  const midEnd = canvas.getBoundingClientRect().left + canvas.getBoundingClientRect().width / 2;
   for (const t of e.changedTouches) {
-    if (t.clientX < canvas.width / 2) isLeftUp = false;
+    if (t.clientX < midEnd) isLeftUp = false;
     else isRightUp = false;
   }
 });
