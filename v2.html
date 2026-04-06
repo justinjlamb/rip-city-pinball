@@ -324,9 +324,11 @@ async function loadLeaderboard(highlightName) {
     ol.innerHTML = '';
     (data || []).forEach((s, i) => {
       const li = document.createElement('li');
-      const esc = s.player_name.replace(/</g, '&lt;');
-      li.innerHTML = '<span class="lb-rank">' + (i+1) + '.</span><span class="lb-name">' + esc + '</span><span class="lb-score">' + s.score.toLocaleString() + '</span>';
-      if (highlightName && s.player_name === highlightName && s.score === data[i].score) li.classList.add('lb-highlight');
+      const rank = document.createElement('span'); rank.className = 'lb-rank'; rank.textContent = (i+1) + '.';
+      const name = document.createElement('span'); name.className = 'lb-name'; name.textContent = s.player_name;
+      const sc = document.createElement('span'); sc.className = 'lb-score'; sc.textContent = s.score.toLocaleString();
+      li.append(rank, name, sc);
+      if (highlightName && s.player_name === highlightName) li.classList.add('lb-highlight');
       ol.appendChild(li);
     });
     if (data && data.length > 0) highScore = data[0].score;
@@ -335,10 +337,16 @@ async function loadLeaderboard(highlightName) {
 
 async function submitScore(name, finalScore) {
   if (!sb) return false;
+  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
   try {
-    const { error } = await sb.from('pinball_scores').insert({ player_name: name, score: finalScore });
+    const { error } = await Promise.race([
+      sb.from('pinball_scores').insert({ player_name: name, score: finalScore }),
+      timeout(5000)
+    ]);
     if (error) throw error;
-    await loadLeaderboard(name);
+    // Score saved — leaderboard refresh is best-effort
+    try { await Promise.race([loadLeaderboard(name), timeout(5000)]); }
+    catch (e) { console.warn('Leaderboard refresh failed:', e); }
     return true;
   } catch (e) { console.warn('Score submit failed:', e); return false; }
 }
@@ -359,6 +367,8 @@ function hideGameOverOverlay() {
 let gameOverPhase = 0; // 0=inactive, 1=slam, 2=countup, 3=highscore, 4=input
 let gameOverTimer = 0;
 let gameOverFinalScore = 0;
+let isSubmitting = false;
+let retryTimeoutId = null;
 let gameOverCountupVal = 0;
 
 function sndGameOver() {
@@ -381,7 +391,14 @@ function startGameOverSequence() {
   gameOverFinalScore = score;
   gameOverPhase = 1;
   gameOverTimer = 0;
+  isSubmitting = false;
+  if (retryTimeoutId) { clearTimeout(retryTimeoutId); retryTimeoutId = null; }
   sndGameOver();
+  // Reset submit button for fresh state
+  const btn = document.getElementById('submit-score');
+  btn.disabled = false;
+  btn.textContent = 'SUBMIT';
+  btn.style.borderColor = '';
   // Show overlay with just the title initially, hide form
   const overlay = document.getElementById('gameover-overlay');
   overlay.classList.remove('hidden');
@@ -472,7 +489,10 @@ function insertLeaderboardPlaceholder(finalScore) {
   const li = document.createElement('li');
   li.id = 'lb-placeholder';
   li.classList.add('lb-highlight');
-  li.innerHTML = '<span class="lb-rank" style="color:#FFD700;">' + (insertIdx + 1) + '.</span><span class="lb-name" style="color:#FFD700;animation:blink-prompt 1s ease-in-out infinite;">???</span><span class="lb-score" style="color:#FFD700;">' + finalScore.toLocaleString() + '</span>';
+  const rank = document.createElement('span'); rank.className = 'lb-rank'; rank.style.color = '#FFD700'; rank.textContent = (insertIdx + 1) + '.';
+  const name = document.createElement('span'); name.className = 'lb-name'; name.style.cssText = 'color:#FFD700;animation:blink-prompt 1s ease-in-out infinite;'; name.textContent = '???';
+  const sc = document.createElement('span'); sc.className = 'lb-score'; sc.style.color = '#FFD700'; sc.textContent = finalScore.toLocaleString();
+  li.append(rank, name, sc);
   if (insertIdx < items.length) {
     ol.insertBefore(li, items[insertIdx]);
     // Re-number ranks below
@@ -2746,9 +2766,12 @@ function gameLoop(ts) {
 
 // ── GAME OVER HANDLERS ──
 document.getElementById('submit-score').addEventListener('click', async () => {
+  if (isSubmitting) return;
   const input = document.getElementById('player-name');
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
+  isSubmitting = true;
+  if (retryTimeoutId) { clearTimeout(retryTimeoutId); retryTimeoutId = null; }
   const btn = document.getElementById('submit-score');
   btn.disabled = true;
   btn.textContent = 'SAVING...';
@@ -2766,8 +2789,9 @@ document.getElementById('submit-score').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = 'RETRY';
     btn.style.borderColor = '#C8102E';
-    setTimeout(() => { btn.style.borderColor = ''; btn.textContent = 'SUBMIT'; }, 2000);
+    retryTimeoutId = setTimeout(() => { btn.style.borderColor = ''; btn.textContent = 'SUBMIT'; retryTimeoutId = null; }, 2000);
   }
+  isSubmitting = false;
 });
 
 document.getElementById('player-name').addEventListener('keydown', e => {
