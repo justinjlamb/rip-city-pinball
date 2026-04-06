@@ -660,8 +660,8 @@ function getEventTier(label) {
   if (MAJOR_EVENTS_FEED.some(e => label.toUpperCase().includes(e))) return 'major';
   return 'minor';
 }
-function isMinor(label) { return MINOR_COLLAPSIBLE.some(e => label.toUpperCase().includes(e)); }
-function getMinorKey(label) { return MINOR_COLLAPSIBLE.find(e => label.toUpperCase().includes(e)) || label; }
+function isMinor(label) { return MINOR_COLLAPSIBLE.some(e => label.toUpperCase().includes(e.toUpperCase())); }
+function getMinorKey(label) { return MINOR_COLLAPSIBLE.find(e => label.toUpperCase().includes(e.toUpperCase())) || label; }
 
 function addScore(pts, label, elementType) {
   // Variety streak
@@ -709,7 +709,8 @@ function addScore(pts, label, elementType) {
       const runPts = parseInt(existing.dataset.runpts) + finalPts;
       existing.dataset.count = count;
       existing.dataset.runpts = runPts;
-      existing.querySelector('.feed-label').textContent = minorKey + ' x' + count;
+      const origLabel = existing.dataset.origLabel || minorKey;
+      existing.querySelector('.feed-label').textContent = origLabel + ' x' + count;
       existing.querySelector('.feed-pts').textContent = '+' + runPts.toLocaleString();
       existing.querySelector('.feed-pts').style.animation = 'none';
       existing.querySelector('.feed-pts').offsetHeight;
@@ -736,6 +737,7 @@ function addFeedItem(label, pts, tier, minorKey, count, runPts) {
   div.style.overflow = 'hidden';
   if (minorKey) {
     div.dataset.minor = minorKey;
+    div.dataset.origLabel = label;
     div.dataset.count = count;
     div.dataset.runpts = runPts;
   }
@@ -1335,16 +1337,28 @@ async function loadWalls() {
         const freq = 660 + Math.min(bumperStreakCount, 12) * 40;
         playTone(Math.min(freq, 1200), 0.08, 'square', 0.1);
         playTone(Math.min(freq + 220, 1400), 0.06, 'sine', 0.06);
-        // First-hit callout
+        // Bumper message — first hit shows name, rapid hits consolidate
         const bumperNames = {
           'bumper-B1': 'NEW SPREADSHEET FORMULA',
           'bumper-B2': "YOU'VE GOT MAIL",
           'bumper-B3': 'CHECKING MOMENTUS',
           'bumper-B4': 'NEW SLACK MESSAGE',
         };
-        if (!bumperFirstHit.has(otherBody.label)) {
-          bumperFirstHit.add(otherBody.label);
-          showMessage(bumperNames[otherBody.label] || 'BUMPER', 72);
+        if (bumperStreakCount <= 1) {
+          // First hit or isolated hit — show the bumper's personality
+          if (!bumperFirstHit.has(otherBody.label)) {
+            bumperFirstHit.add(otherBody.label);
+            showMessage(bumperNames[otherBody.label] || 'BUMPER', 72);
+          }
+        } else {
+          // Rapid streak — consolidate into escalating message
+          const streakLabels = [
+            '', '', 'NOTIFICATIONS PILING UP',
+            'INBOX FLOODING', 'INBOX OVERLOAD',
+            'TOTAL CHAOS', 'INFORMATION AVALANCHE'
+          ];
+          const idx = Math.min(bumperStreakCount, streakLabels.length - 1);
+          showMessage(streakLabels[idx] + ' x' + bumperStreakCount, 90);
         }
         ballStats.bumpers++;
         addScore(POINTS.BUMPER, bumperNames[otherBody.label] || 'BUMPER', 'bumper');
