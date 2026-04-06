@@ -262,11 +262,22 @@ let imageLoaded = false;
 tableImg.onload = () => { imageLoaded = true; };
 tableImg.onerror = () => { console.error('table-layer0.png failed to load — game will not render'); };
 
-const tableLitImg = new Image();
-tableLitImg.src = 'table-lit.png';
-let litImageLoaded = false;
-tableLitImg.onload = () => { litImageLoaded = true; };
-tableLitImg.onerror = () => { console.warn('table-lit.png failed to load — lit labels will not render'); };
+// Drop-target lit overlays — individual full-table transparent PNGs per venue
+const targetLitImgs = [
+  new Image(), // 0: PDR
+  new Image(), // 1: ROSE ROOM
+  new Image(), // 2: SCR
+  new Image(), // 3: GEORGIA PACIFIC
+  new Image(), // 4: FOUNTAIN
+  new Image(), // 5: WEYERHAEUSER
+];
+targetLitImgs[0].src = 'RipCityPinball-PDR-Lit.png';
+targetLitImgs[1].src = 'RipCityPinball-RoseRoom-Lit.png';
+targetLitImgs[2].src = 'RipCityPinball-SCR-Lit.png';
+targetLitImgs[3].src = 'RipCityPinball-GeorgiaPacific-Lit.png';
+targetLitImgs[4].src = 'RipCityPinball-Fountain-Lit.png';
+targetLitImgs[5].src = 'RipCityPinball-Weyerhaeuser-Lit.png';
+let litImageLoaded = true; // no single image to wait for — each checked individually
 
 const tableOverlayImg = new Image();
 tableOverlayImg.src = 'table-overlay.png';
@@ -297,18 +308,7 @@ const bumperGlowTimers = {
 };
 const BUMPER_FLASH_DURATION = 12; // frames (~200ms at 60fps)
 
-// Crop rectangles for each label's glow region (in image pixel coords)
-// Cut at midpoints between adjacent labels to avoid glow overlap
-const LABEL_CROPS = [
-  // Left bank (PDR, ROSE ROOM, SCR) — padded 30px for glow bleed
-  { x: 145, y: 1002, w: 315, h: 159 },  // 0: PDR
-  { x: 145, y: 1131, w: 315, h: 173 },  // 1: ROSE ROOM
-  { x: 145, y: 1274, w: 315, h: 236 },  // 2: SCR
-  // Right bank (GEORGIA PACIFIC, FOUNTAIN, WEYERHAEUSER)
-  { x: 1105, y: 1030, w: 330, h: 189 }, // 3: GEORGIA PACIFIC
-  { x: 1105, y: 1189, w: 330, h: 171 }, // 4: FOUNTAIN
-  { x: 1105, y: 1330, w: 330, h: 230 }, // 5: WEYERHAEUSER
-];
+// LABEL_CROPS removed — replaced by individual overlay PNGs (targetLitImgs)
 
 // ── SUPABASE ───────────────────────────────────────────────
 const SUPABASE_URL = 'https://damhvnkyfqsreevppfkf.supabase.co';
@@ -1062,20 +1062,17 @@ function resetTargets() {
 }
 
 function renderLabels() {
-  if (!litImageLoaded) return;
   const flashing = allTargetsTimer > 0;
 
   for (let i = 0; i < TARGET_LABELS.length; i++) {
     let isLit = TARGET_LABELS[i].lit;
     if (flashing) isLit = isLit && Math.floor(allTargetsTimer / 8) % 2 === 0;
-    if (!isLit) continue; // unlit state is baked into the background image
+    if (!isLit) continue;
 
-    const crop = LABEL_CROPS[i];
-    ctx.drawImage(tableLitImg,
-      crop.x, crop.y, crop.w, crop.h,           // source rect from lit image
-      offX + crop.x * scale, offY + crop.y * scale,  // dest position on canvas
-      crop.w * scale, crop.h * scale             // dest size
-    );
+    const img = targetLitImgs[i];
+    if (img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, offX, offY, IMG_W * scale, IMG_H * scale);
+    }
   }
 }
 
