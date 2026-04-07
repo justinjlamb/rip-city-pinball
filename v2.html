@@ -578,6 +578,7 @@ function playTone(freq, dur, type, vol) {
     g.gain.setValueAtTime(vol || 0.08, audioCtx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
     o.start(); o.stop(audioCtx.currentTime + dur);
+    o.onended = () => { o.disconnect(); g.disconnect(); };
   } catch(e) { console.warn('Audio:', e.message); }
 }
 
@@ -597,6 +598,13 @@ let ball;
 let drainTimer = 0;
 let stuckFrames = 0;
 let launcherGate = null;
+
+// ── PHYSICS ANOMALY DETECTION (temporary — remove before showcase) ──
+const physicsLog = [];
+let anomalyCount = 0;
+let lastBallPos = null;
+const TELEPORT_THRESHOLD = 80;
+const OOB_MARGIN = 50;
 let launcherGateActive = false;
 const SLING_FRONT_DEBUG = new Set();
 
@@ -1563,12 +1571,17 @@ canvas.addEventListener('touchstart', e => {
 });
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  if (plungerCharging) { launchBall(); return; }
   const midEnd = canvas.getBoundingClientRect().left + canvas.getBoundingClientRect().width / 2;
   for (const t of e.changedTouches) {
     if (t.clientX < midEnd) isLeftUp = false;
     else isRightUp = false;
   }
+  if (plungerCharging) { launchBall(); return; }
+});
+canvas.addEventListener('touchcancel', e => {
+  isLeftUp = false;
+  isRightUp = false;
+  plungerCharging = false;
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1689,6 +1702,11 @@ let drainBonusTotal = 0;
 
 function drainBall() {
   if (gameState === 'drain') return;
+  // Reset multiball launch sequence to prevent orphaned balls
+  if (multiballPhase !== 'idle') {
+    multiballPhase = 'idle';
+    if (multiballCaughtBall) { World.remove(world, multiballCaughtBall); multiballCaughtBall = null; }
+  }
   if (ballSaveActive) {
     ballSaveActive = false;
     ballSaveTimer = 0;
@@ -1874,6 +1892,11 @@ function update() {
     if (rampT >= 1) {
       rampT = 1;
       rampAnimating = false;
+      // Don't re-add ball to physics if game is draining or over
+      if (gameState === 'drain' || gameState === 'gameover' || gameState === 'attract') {
+        rampBall = null;
+        return;
+      }
       Body.setPosition(rampBall, { x: RAMP.exit.x, y: RAMP.exit.y });
       // Randomize exit velocity so ramp doesn't feel robotic
       const vx = 5 + (Math.random() - 0.4) * 6;  // 2 to 8.6, biased right
@@ -1922,6 +1945,33 @@ function update() {
       const f = MAX_SPEED / spd;
       Body.setVelocity(ball, { x: v.x * f, y: v.y * f });
     }
+  }
+
+  // ── Physics anomaly detection (logging only) ──
+  if (ball && gameState === 'play' && !rampAnimating) {
+    const bx = ball.position.x, by = ball.position.y;
+    if (lastBallPos) {
+      const dx = bx - lastBallPos.x, dy = by - lastBallPos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > TELEPORT_THRESHOLD) {
+        anomalyCount++;
+        physicsLog.push({ type: 'TELEPORT', from: { ...lastBallPos }, to: { x: bx, y: by }, dist: Math.round(dist) });
+        console.warn('TELEPORT', physicsLog[physicsLog.length - 1]);
+      }
+    }
+    if (bx < -OOB_MARGIN || bx > IMG_W + OOB_MARGIN || by < -OOB_MARGIN) {
+      anomalyCount++;
+      physicsLog.push({ type: 'OOB', pos: { x: Math.round(bx), y: Math.round(by) } });
+      console.warn('OOB', physicsLog[physicsLog.length - 1]);
+    }
+    if (bumperStreakCount >= 6 && bumperStreakTimer > 100) {
+      if (!physicsLog.length || physicsLog[physicsLog.length - 1].type !== 'BUMPER_TRAP' || physicsLog[physicsLog.length - 1].streak !== bumperStreakCount) {
+        anomalyCount++;
+        physicsLog.push({ type: 'BUMPER_TRAP', streak: bumperStreakCount, pos: { x: Math.round(bx), y: Math.round(by) } });
+        console.warn('BUMPER_TRAP', physicsLog[physicsLog.length - 1]);
+      }
+    }
+    lastBallPos = { x: bx, y: by };
   }
 
   // Drain detection (skip while ball is on ramp or caught in scoop, but allow during launching)
@@ -2556,6 +2606,16 @@ function render() {
   if (gameState === 'drain') renderDrainBonus();
 
   // Drain — no feed entry needed, ball pips handle the visual
+
+  // Physics anomaly counter (temporary debug HUD)
+  if (anomalyCount > 0) {
+    ctx.save();
+    ctx.font = '14px monospace';
+    ctx.fillStyle = 'rgba(255,60,60,0.8)';
+    ctx.textAlign = 'left';
+    ctx.fillText('ANOMALIES: ' + anomalyCount, 10, canvas.height - 10);
+    ctx.restore();
+  }
 
   // End screen shake
   if (shake > 0) ctx.restore();
