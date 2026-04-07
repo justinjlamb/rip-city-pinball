@@ -163,7 +163,7 @@ canvas { display: block; width: 100%; height: 100%; }
 
   /* Mobile leaderboard in game over */
   #mobile-leaderboard {
-    display: none; max-height: 30vh; overflow-y: auto; width: 280px;
+    display: none; max-height: 60vh; overflow-y: auto; width: 320px;
     margin-top: 0.5rem; border-top: 1px solid #333; padding-top: 0.5rem;
   }
   #mobile-leaderboard.visible { display: block; }
@@ -3284,7 +3284,7 @@ document.getElementById('submit-score').addEventListener('click', async () => {
   if (saved) {
     btn.textContent = 'SAVED!';
     await new Promise(r => setTimeout(r, 800));
-    hideGameOverOverlay();
+    hideGameOverOverlay(name);
     if (gameOverFinalScore > highScore) highScore = gameOverFinalScore;
     gameState = 'attract';
     document.getElementById('start-prompt').classList.remove('hidden');
@@ -3368,7 +3368,7 @@ if (isMobile) {
   };
 
   // Populate mobile leaderboard in game over
-  function populateMobileLeaderboard() {
+  function populateMobileLeaderboard(highlightName, highlightScore) {
     const mlb = document.getElementById('mobile-leaderboard');
     mlb.textContent = '';
     const title = document.createElement('div');
@@ -3376,8 +3376,8 @@ if (isMobile) {
     title.textContent = 'HIGH SCORES';
     mlb.appendChild(title);
     const entries = document.querySelectorAll('#leaderboard li');
-    const max = Math.min(entries.length, 5);
-    for (let i = 0; i < max; i++) {
+    let highlightedRow = null;
+    for (let i = 0; i < entries.length; i++) {
       const row = document.createElement('div');
       row.className = 'mlb-row';
       const rank = document.createElement('span');
@@ -3385,31 +3385,55 @@ if (isMobile) {
       rank.textContent = entries[i].querySelector('.lb-rank')?.textContent || (i + 1);
       const name = document.createElement('span');
       name.className = 'mlb-name';
-      name.textContent = entries[i].querySelector('.lb-name')?.textContent || '---';
+      const entryName = entries[i].querySelector('.lb-name')?.textContent || '---';
+      name.textContent = entryName;
       const sc = document.createElement('span');
       sc.className = 'mlb-pts';
-      sc.textContent = entries[i].querySelector('.lb-score')?.textContent || '0';
+      const entryScore = entries[i].querySelector('.lb-score')?.textContent || '0';
+      sc.textContent = entryScore;
+      // Highlight the player's entry
+      if (highlightName && entryName === highlightName && !highlightedRow) {
+        row.style.background = 'rgba(255,215,0,0.15)';
+        row.style.borderRadius = '4px';
+        name.style.color = '#FFD700';
+        sc.style.color = '#FFD700';
+        highlightedRow = row;
+      }
       row.appendChild(rank);
       row.appendChild(name);
       row.appendChild(sc);
       mlb.appendChild(row);
     }
-    if (max > 0) mlb.classList.add('visible');
+    // Dismiss button
+    const dismiss = document.createElement('div');
+    dismiss.textContent = 'TAP TO CONTINUE';
+    dismiss.style.cssText = 'text-align:center;color:#555;font-family:"Press Start 2P",monospace;font-size:0.5rem;padding:0.8rem 0;cursor:pointer;';
+    dismiss.addEventListener('click', () => {
+      mlb.classList.remove('visible');
+      document.getElementById('mobile-start').classList.add('visible');
+    });
+    mlb.appendChild(dismiss);
+    mlb.classList.add('visible');
+    // Scroll to highlighted row
+    if (highlightedRow) {
+      setTimeout(() => highlightedRow.scrollIntoView({ block: 'center', behavior: 'smooth' }), 100);
+    }
   }
 
-  // Hook game over to show mobile leaderboard
+  // Hook game over — don't show leaderboard until after submit/skip
   const _origShowGameOver = showGameOverOverlay;
   showGameOverOverlay = function() {
     _origShowGameOver();
-    populateMobileLeaderboard();
   };
 
-  // Hook game over hide to show mobile start again
+  // Hook game over hide — show leaderboard with highlight
   const _origHideGameOver = hideGameOverOverlay;
-  hideGameOverOverlay = function() {
+  hideGameOverOverlay = function(playerName) {
     _origHideGameOver();
-    document.getElementById('mobile-leaderboard').classList.remove('visible');
-    document.getElementById('mobile-start').classList.add('visible');
+    // Reload leaderboard from Supabase, then show mobile version
+    loadLeaderboard(playerName).then(() => {
+      populateMobileLeaderboard(playerName);
+    });
   };
 }
 </script>
