@@ -244,6 +244,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div id="lb-status"></div>
   </div>
 </div>
+<canvas id="storm-canvas" style="position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:50;display:none;"></canvas>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"></script>
 <script>
@@ -387,6 +388,7 @@ function sndHighScore() {
 }
 
 function startGameOverSequence() {
+  if (stormActive || stormPhase !== 'idle') endStorm();
   engine.gravity.y = NORMAL_GRAVITY; // reset for next game
   gameOverFinalScore = score;
   gameOverPhase = 1;
@@ -633,6 +635,387 @@ const POINTS = {
 const TARGET_PROGRESSION = [2500, 3000, 3500, 4000, 4500, 5000];
 let allTargetsMultiplier = 1;
 let allTargetsMultiTimer = 0;
+
+// ── STORM MODE (x2 multiplier spectacle) ──
+let stormActive = false;
+let stormTimer = 0;
+const STORM_DURATION = 1800; // 30 seconds at 60fps
+const STORM_BALL_INTERVAL = 300; // new ball every 5 seconds
+let stormBallTimer = 0;
+let stormBalls = []; // extra balls spawned during storm
+let stormRaindrops = [];
+let stormSpotAngle = 0;
+let stormFlashTimer = 0;
+
+const stormCanvas = document.getElementById('storm-canvas');
+const stormCtx = stormCanvas.getContext('2d');
+let stormPhase = 'idle'; // idle, booked, getready, raining
+let stormPhaseTimer = 0;
+let stormFrozenBallPos = null; // freeze ball position during announcement
+
+function startStorm() {
+  stormPhase = 'booked';
+  stormPhaseTimer = 90; // 1.5 seconds for "ALL ROOMS BOOKED!"
+  // Freeze the ball
+  if (ball) {
+    stormFrozenBallPos = { x: ball.position.x, y: ball.position.y };
+  }
+  // Set up the storm canvas for announcements
+  const dpr = window.devicePixelRatio || 1;
+  stormCanvas.width = window.innerWidth * dpr;
+  stormCanvas.height = window.innerHeight * dpr;
+  stormCanvas.style.display = 'block';
+  stormCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function startStormRain() {
+  stormActive = true;
+  stormPhase = 'raining';
+  stormTimer = STORM_DURATION;
+  stormBallTimer = 0; // launch 3 immediately
+  stormRaindrops = [];
+  stormSpotAngle = 0;
+  stormFrozenBallPos = null;
+  sndThunder();
+  // Launch 3 balls immediately from scoop
+  for (let i = 0; i < 3; i++) {
+    setTimeout(() => spawnStormBall(), i * 150); // stagger by 150ms
+  }
+}
+
+function endStorm() {
+  stormActive = false;
+  stormPhase = 'idle';
+  stormTimer = 0;
+  stormCanvas.style.display = 'none';
+  stormRaindrops = [];
+  // Storm balls stay in multiballs array — drain naturally
+  for (const sb of stormBalls) {
+    if (!multiballs.includes(sb)) multiballs.push(sb);
+  }
+  stormBalls = [];
+  if (multiballs.length > 0) isMultiball = true;
+}
+
+function spawnStormBall() {
+  // Eject from the scoop like multiball
+  if (!scoopBody) return;
+  const sx = scoopBody.position.x;
+  const sy = scoopBody.position.y;
+  const b = createBall(sx, sy);
+  const angle = 0.4 + Math.random() * 1.0;
+  const spd = 17 + Math.random() * 8;
+  Body.setVelocity(b, { x: Math.cos(angle) * spd, y: Math.sin(angle) * spd });
+  World.add(world, b);
+  stormBalls.push(b);
+  multiballs.push(b);
+  isMultiball = true;
+  sndThunderCrack();
+  sndLaunch();
+}
+
+function sndThunder() {
+  if (!audioCtx || !audioReady) return;
+  const now = audioCtx.currentTime;
+
+  // Layer 1: Sharp crack — wide-band noise, loud and instant
+  const crack = audioCtx.createBufferSource();
+  const crackBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.4, audioCtx.sampleRate);
+  const cd = crackBuf.getChannelData(0);
+  for (let i = 0; i < cd.length; i++) cd[i] = (Math.random() * 2 - 1);
+  crack.buffer = crackBuf;
+  const crackHP = audioCtx.createBiquadFilter();
+  crackHP.type = 'highpass'; crackHP.frequency.value = 800;
+  const crackEnv = audioCtx.createGain();
+  crackEnv.gain.setValueAtTime(0.25, now);
+  crackEnv.gain.exponentialRampToValueAtTime(0.05, now + 0.05);
+  crackEnv.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+  crack.connect(crackHP); crackHP.connect(crackEnv); crackEnv.connect(audioCtx.destination);
+  crack.start(now); crack.stop(now + 0.4);
+  crack.onended = () => { crack.disconnect(); crackHP.disconnect(); crackEnv.disconnect(); };
+
+  // Layer 2: Mid rumble — bandpass noise, rolls in after the crack
+  const rumble = audioCtx.createBufferSource();
+  const rumbleBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.2, audioCtx.sampleRate);
+  const rd = rumbleBuf.getChannelData(0);
+  for (let i = 0; i < rd.length; i++) rd[i] = (Math.random() * 2 - 1);
+  rumble.buffer = rumbleBuf;
+  const rumbleBP = audioCtx.createBiquadFilter();
+  rumbleBP.type = 'bandpass'; rumbleBP.frequency.value = 200; rumbleBP.Q.value = 0.5;
+  const rumbleEnv = audioCtx.createGain();
+  rumbleEnv.gain.setValueAtTime(0.001, now);
+  rumbleEnv.gain.linearRampToValueAtTime(0.15, now + 0.08);
+  rumbleEnv.gain.setValueAtTime(0.15, now + 0.3);
+  rumbleEnv.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+  rumble.connect(rumbleBP); rumbleBP.connect(rumbleEnv); rumbleEnv.connect(audioCtx.destination);
+  rumble.start(now + 0.02); rumble.stop(now + 1.2);
+  rumble.onended = () => { rumble.disconnect(); rumbleBP.disconnect(); rumbleEnv.disconnect(); };
+
+  // Layer 3: Sub-bass — you feel this, don't hear it
+  const sub = audioCtx.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(35, now);
+  sub.frequency.exponentialRampToValueAtTime(20, now + 0.8);
+  const subEnv = audioCtx.createGain();
+  subEnv.gain.setValueAtTime(0.001, now);
+  subEnv.gain.linearRampToValueAtTime(0.2, now + 0.05);
+  subEnv.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+  sub.connect(subEnv); subEnv.connect(audioCtx.destination);
+  sub.start(now); sub.stop(now + 0.85);
+  sub.onended = () => { sub.disconnect(); subEnv.disconnect(); };
+}
+
+function sndThunderCrack() {
+  if (!audioCtx || !audioReady) return;
+  const now = audioCtx.currentTime;
+  // Quick crack — for lightning during storm
+  const noise = audioCtx.createBufferSource();
+  const nBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.25, audioCtx.sampleRate);
+  const nd = nBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1);
+  noise.buffer = nBuf;
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 600;
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = 2000; bp.Q.value = 0.3;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.15, now);
+  g.gain.exponentialRampToValueAtTime(0.02, now + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+  noise.connect(hp); hp.connect(bp); bp.connect(g); g.connect(audioCtx.destination);
+  noise.start(now); noise.stop(now + 0.25);
+  noise.onended = () => { noise.disconnect(); hp.disconnect(); bp.disconnect(); g.disconnect(); };
+  // Rumble tail
+  const tail = audioCtx.createOscillator();
+  tail.type = 'sine';
+  tail.frequency.value = 30 + Math.random() * 20;
+  const tg = audioCtx.createGain();
+  tg.gain.setValueAtTime(0.08, now + 0.03);
+  tg.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+  tail.connect(tg); tg.connect(audioCtx.destination);
+  tail.start(now + 0.03); tail.stop(now + 0.35);
+  tail.onended = () => { tail.disconnect(); tg.disconnect(); };
+}
+
+function updateStorm() {
+  // ── Announcement phases (ball frozen) ──
+  if (stormPhase === 'booked' || stormPhase === 'getready') {
+    stormPhaseTimer--;
+    // Keep ball frozen
+    if (ball && stormFrozenBallPos) {
+      Body.setPosition(ball, stormFrozenBallPos);
+      Body.setVelocity(ball, { x: 0, y: 0 });
+    }
+    if (stormPhase === 'booked' && stormPhaseTimer <= 0) {
+      stormPhase = 'getready';
+      stormPhaseTimer = 60; // 1 second for "GET READY"
+    }
+    if (stormPhase === 'getready' && stormPhaseTimer <= 0) {
+      startStormRain();
+    }
+    return;
+  }
+
+  // ── Active storm ──
+  if (!stormActive) return;
+  stormTimer--;
+  if (stormTimer <= 0) { endStorm(); return; }
+
+  // Spawn ball every 5 seconds (after the initial 3)
+  stormBallTimer--;
+  if (stormBallTimer <= 0 && gameState === 'play') {
+    spawnStormBall();
+    stormBallTimer = STORM_BALL_INTERVAL;
+  }
+
+  // Lightning flashes — occasional early, frequent late
+  const lightningChance = stormTimer < 300 ? 0.06 : (stormTimer < 900 ? 0.02 : 0.008);
+  if (Math.random() < lightningChance) {
+    stormFlashTimer = 10;
+    triggerFlash('rgb(200,220,255)', 15, 0.35);
+    sndThunderCrack();
+  }
+
+  // Clean up drained storm balls
+  for (let i = stormBalls.length - 1; i >= 0; i--) {
+    if (stormBalls[i].position.y > IMG_H + 100) {
+      stormBalls.splice(i, 1);
+    }
+  }
+}
+
+function renderStorm() {
+  // ── Announcement phase rendering ──
+  if (stormPhase === 'booked' || stormPhase === 'getready') {
+    const sw = window.innerWidth, sh = window.innerHeight;
+    stormCtx.clearRect(0, 0, sw, sh);
+    // Dim
+    stormCtx.fillStyle = 'rgba(0,0,0,0.5)';
+    stormCtx.fillRect(0, 0, sw, sh);
+    // Center text on game canvas
+    const gameCol = document.getElementById('game-col');
+    const gcr = gameCol ? gameCol.getBoundingClientRect() : { left: 0, width: sw, top: 0, height: sh };
+    const cx = gcr.left + gcr.width / 2;
+    const cy = gcr.top + gcr.height * 0.4;
+    const blink = Math.floor(Date.now() / 300) % 2 === 0;
+
+    stormCtx.save();
+    stormCtx.textAlign = 'center';
+    stormCtx.textBaseline = 'middle';
+
+    if (stormPhase === 'booked') {
+      stormCtx.font = `bold ${Math.floor(gcr.width * 0.06)}px "Press Start 2P", monospace`;
+      stormCtx.fillStyle = blink ? '#FFD700' : '#C8102E';
+      stormCtx.fillText('ALL ROOMS', cx, cy - gcr.width * 0.04);
+      stormCtx.fillText('BOOKED!', cx, cy + gcr.width * 0.04);
+    } else {
+      stormCtx.font = `bold ${Math.floor(gcr.width * 0.07)}px "Press Start 2P", monospace`;
+      stormCtx.fillStyle = blink ? '#fff' : '#FFD700';
+      stormCtx.fillText('GET READY', cx, cy);
+    }
+    stormCtx.restore();
+    return;
+  }
+
+  if (!stormActive) return;
+  const sw = window.innerWidth, sh = window.innerHeight;
+  stormCtx.clearRect(0, 0, sw, sh);
+
+  const progress = 1 - (stormTimer / STORM_DURATION);
+  const intensity = 0.5 + progress * 0.5;
+
+  // ── Layer 1: Rain (base layer — nothing covers it) ──
+  const rainCount = Math.floor(12 + progress * 25);
+  for (let i = 0; i < rainCount; i++) {
+    stormRaindrops.push({
+      x: Math.random() * (sw + 300) - 150,
+      y: -10 - Math.random() * 60,
+      speed: 18 + Math.random() * 16 + progress * 14,
+      len: 22 + Math.random() * 35,
+      alpha: 0.25 + Math.random() * 0.5,
+    });
+  }
+
+  stormCtx.lineWidth = 1.5;
+  for (let i = stormRaindrops.length - 1; i >= 0; i--) {
+    const r = stormRaindrops[i];
+    r.y += r.speed;
+    r.x -= r.speed * 0.15;
+
+    if (r.y > sh + r.len) {
+      stormRaindrops.splice(i, 1);
+      continue;
+    }
+
+    stormCtx.strokeStyle = `rgba(180,200,230,${r.alpha})`;
+    stormCtx.beginPath();
+    stormCtx.moveTo(r.x, r.y);
+    stormCtx.lineTo(r.x - r.len * 0.15, r.y + r.len);
+    stormCtx.stroke();
+  }
+
+  if (stormRaindrops.length > 700) stormRaindrops.splice(0, stormRaindrops.length - 700);
+
+  // ── Layer 2: Dim overlay ──
+  const dimAlpha = 0.3 + progress * 0.15;
+  stormCtx.fillStyle = `rgba(0,0,0,${dimAlpha})`;
+  stormCtx.fillRect(0, 0, sw, sh);
+
+  // ── Layer 3: Spotlights (punch through dim) ──
+  const cx = sw / 2;
+  const cy = sh * 0.4;
+  const spotRadius = Math.max(sw, sh) * 0.8;
+
+  stormSpotAngle += 0.02 + (progress > 0.6 ? (progress - 0.6) * 0.08 : 0);
+
+  const spots = [];
+  for (let s = 0; s < 2; s++) {
+    const angle = stormSpotAngle + s * Math.PI;
+    spots.push({
+      x: cx + Math.cos(angle) * spotRadius * 0.5,
+      y: cy + Math.sin(angle) * spotRadius * 0.35,
+    });
+  }
+
+  // Punch holes in the dim
+  stormCtx.save();
+  stormCtx.globalCompositeOperation = 'destination-out';
+  for (const sp of spots) {
+    const grad = stormCtx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, spotRadius * 0.55);
+    grad.addColorStop(0, `rgba(0,0,0,${1.0 * intensity})`);
+    grad.addColorStop(0.25, `rgba(0,0,0,${0.8 * intensity})`);
+    grad.addColorStop(0.5, `rgba(0,0,0,${0.3 * intensity})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    stormCtx.fillStyle = grad;
+    stormCtx.fillRect(0, 0, sw, sh);
+  }
+  stormCtx.restore();
+
+  // Spotlight color glow — white and Blazers red
+  const spotColors = [
+    { r: 255, g: 255, b: 255 },
+    { r: 200, g: 16, b: 46 },
+  ];
+  for (let i = 0; i < spots.length; i++) {
+    const sp = spots[i];
+    const c = spotColors[i];
+    const grad = stormCtx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, spotRadius * 0.5);
+    grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${0.6 * intensity})`);
+    grad.addColorStop(0.15, `rgba(${c.r},${c.g},${c.b},${0.35 * intensity})`);
+    grad.addColorStop(0.4, `rgba(${c.r},${c.g},${c.b},${0.1 * intensity})`);
+    grad.addColorStop(1, `rgba(${c.r},${c.g},${c.b},0)`);
+    stormCtx.fillStyle = grad;
+    stormCtx.fillRect(0, 0, sw, sh);
+  }
+
+  // ── Layer 4: "MAKE IT RAIN" flashing on side panels ──
+  const leftPanel = document.getElementById('panel-left');
+  const rightPanel = document.getElementById('panel-right');
+  const lpr = leftPanel ? leftPanel.getBoundingClientRect() : null;
+  const rpr = rightPanel ? rightPanel.getBoundingClientRect() : null;
+  const flash = Math.floor(Date.now() / 400) % 2 === 0; // flashes every 400ms
+
+  if (flash) {
+    stormCtx.save();
+    stormCtx.font = `bold ${Math.floor(sh * 0.04)}px "Press Start 2P", monospace`;
+    stormCtx.textAlign = 'center';
+    stormCtx.textBaseline = 'middle';
+    stormCtx.fillStyle = 'rgba(255,215,0,0.95)';
+
+    if (lpr) {
+      stormCtx.fillText('MAKE IT', lpr.left + lpr.width / 2, sh * 0.55);
+      stormCtx.fillText('RAIN', lpr.left + lpr.width / 2, sh * 0.55 + sh * 0.06);
+      stormCtx.fillText('x2', lpr.left + lpr.width / 2, sh * 0.55 + sh * 0.14);
+    }
+    if (rpr) {
+      stormCtx.fillText('MAKE IT', rpr.left + rpr.width / 2, sh * 0.55);
+      stormCtx.fillText('RAIN', rpr.left + rpr.width / 2, sh * 0.55 + sh * 0.06);
+      stormCtx.fillText('x2', rpr.left + rpr.width / 2, sh * 0.55 + sh * 0.14);
+    }
+    stormCtx.restore();
+  }
+
+  // ── Layer 5: Lightning flash ──
+  if (stormFlashTimer > 0) {
+    stormCtx.fillStyle = `rgba(200,220,255,${stormFlashTimer / 12 * 0.5})`;
+    stormCtx.fillRect(0, 0, sw, sh);
+    stormFlashTimer--;
+  }
+
+  // ── Layer 6: Countdown bar at bottom ──
+  const barW = sw * 0.5;
+  const barH = 8;
+  const barX = (sw - barW) / 2;
+  const barY = sh - 40;
+  const remaining = stormTimer / STORM_DURATION;
+
+  stormCtx.fillStyle = 'rgba(50,50,50,0.5)';
+  stormCtx.fillRect(barX, barY, barW, barH);
+
+  const barColor = remaining > 0.3 ? 'rgba(255,215,0,0.8)' : 'rgba(255,60,60,0.9)';
+  stormCtx.fillStyle = barColor;
+  stormCtx.fillRect(barX, barY, barW * remaining, barH);
+}
 
 // ── EVENT FEED + VARIETY STREAK SYSTEM ──
 const EPIC_EVENTS = ['ALL ROOMS', 'MULTIBALL'];
@@ -1052,10 +1435,11 @@ function hitTarget(index, ballBody) {
   if (targetStates.every(s => !s)) {
     allTargetsMultiplier = 2;
     allTargetsMultiTimer = 1800; // 30 seconds
-    addScore(0, 'ALL ROOMS BOOKED! x2 FOR 30s', 'target');
+    addScore(0, 'ALL ROOMS BOOKED! MAKE IT RAIN!', 'target');
     sndAllTargets();
     allTargetsTimer = 180;
-    shakeTrauma = 0.5; // Step 7: screen shake // 3 sec then reset
+    shakeTrauma = 0.5;
+    startStorm();
   }
 }
 
@@ -1607,6 +1991,8 @@ function updateDifficulty() {
 }
 
 function startGame() {
+  if (stormActive || stormPhase !== 'idle') endStorm();
+  resetTargets();
   gameState = 'launch';
   ballNum = 1;
   if (score > highScore) highScore = score;
@@ -1632,7 +2018,8 @@ function serveBall() {
   multiballTimer = 0;
   multiballCaughtBall = null;
   allTargetsTimer = 0;
-  resetTargets();
+  // Don't reset targets on ball drain — rooms stay booked across balls
+  // Targets only reset after completing all 6 (allTargetsTimer countdown)
 
   // Disable launcher gate so ball can be placed in channel
   if (launcherGate) {
@@ -1978,11 +2365,15 @@ function update() {
   if (ball && gameState === 'play' && !rampAnimating &&
       multiballPhase !== 'caught' && multiballPhase !== 'announcing') {
     if (ball.position.y > IMG_H + 100) {
-      if (isMultiball && multiballs.length > 0) {
-        // During multiball, losing the main ball isn't game over —
-        // promote an extra ball to main ball and keep playing
+      if (multiballs.length > 0) {
+        // Extra balls still in play — promote one to main ball
         World.remove(world, ball);
         ball = multiballs.pop();
+        isMultiball = multiballs.length > 0;
+      } else if (stormActive && stormBalls.length > 0) {
+        // Storm balls pending but not yet in multiballs — don't drain
+        World.remove(world, ball);
+        ball = null;
       } else {
         drainBall();
       }
@@ -1993,7 +2384,7 @@ function update() {
 
     // Launcher re-entry: if ball rolls back into the launcher channel,
     // switch to launch state so the player can fire it again
-    else if (ball.position.x > 1480 && ball.position.y > 1800) {
+    else if (ball && ball.position.x > 1480 && ball.position.y > 1800) {
       const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
       if (spd < 2) {
         gameState = 'launch';
@@ -2004,7 +2395,7 @@ function update() {
       }
     }
 
-    if (gameState === 'play') {
+    if (ball && gameState === 'play') {
       // Stuck ball detection: if ball is nearly stationary for 3 seconds, nudge it
       const spd = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
       if (spd < 0.5) {
@@ -2417,8 +2808,30 @@ function render() {
     ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
   }
 
-  // Multiball extra balls (metallic gold)
+  // Storm balls (chrome, same as main ball)
+  for (const mb of stormBalls) {
+    if (mb.position.y > IMG_H + 100) continue;
+    const bx = px(mb.position.x), by = py(mb.position.y);
+    const br = ps(BALL_RADIUS);
+    const bshd = ctx.createRadialGradient(bx + ps(1.5), by + ps(3), br * 0.5, bx + ps(1.5), by + ps(3), br * 1.6);
+    bshd.addColorStop(0, 'rgba(0,0,0,0.35)'); bshd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = bshd; ctx.beginPath(); ctx.arc(bx + ps(1.5), by + ps(3), br * 1.6, 0, Math.PI * 2); ctx.fill();
+    const bgrad = ctx.createRadialGradient(bx - br * 0.25, by - br * 0.25, br * 0.1, bx, by, br);
+    bgrad.addColorStop(0, '#f0f0f4'); bgrad.addColorStop(0.25, '#d0d0d8');
+    bgrad.addColorStop(0.5, '#a0a0a8'); bgrad.addColorStop(0.75, '#707078');
+    bgrad.addColorStop(0.92, '#505058'); bgrad.addColorStop(1, '#383840');
+    ctx.fillStyle = bgrad; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+    const bspec = ctx.createRadialGradient(bx - br * 0.35, by - br * 0.35, 0, bx - br * 0.35, by - br * 0.35, br * 0.4);
+    bspec.addColorStop(0, 'rgba(255,255,255,0.9)'); bspec.addColorStop(0.3, 'rgba(255,255,255,0.5)');
+    bspec.addColorStop(0.6, 'rgba(255,255,255,0.12)'); bspec.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = bspec; ctx.beginPath(); ctx.arc(bx - br * 0.35, by - br * 0.35, br * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = ps(0.5);
+    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // Multiball extra balls (metallic gold) — skip storm balls
   for (const mb of multiballs) {
+    if (stormBalls.includes(mb)) continue;
     const bx = px(mb.position.x), by = py(mb.position.y);
     const br = ps(BALL_RADIUS);
     // Drop shadow
@@ -2547,6 +2960,8 @@ function render() {
     allTargetsMultiTimer--;
     if (allTargetsMultiTimer <= 0) { allTargetsMultiplier = 1; }
   }
+  // Storm mode update
+  updateStorm();
   // Ball save countdown
   if (ballSaveTimer > 0) {
     ballSaveTimer--;
@@ -2606,6 +3021,9 @@ function render() {
   if (gameState === 'drain') renderDrainBonus();
 
   // Drain — no feed entry needed, ball pips handle the visual
+
+  // Storm overlay (renders on its own full-screen canvas)
+  renderStorm();
 
   // Physics anomaly counter (temporary debug HUD)
   if (anomalyCount > 0) {
@@ -2761,6 +3179,19 @@ function drawFlipper(body, side) {
 let debug = false;
 document.addEventListener('keydown', e => {
   if (e.key === 'D' && e.shiftKey) debug = !debug;
+  // Dev shortcut: R triggers storm mode instantly
+  if (e.key === 'r' && gameState === 'play' && !stormActive && stormPhase === 'idle') {
+    for (let i = 0; i < targetStates.length; i++) {
+      targetStates[i] = false;
+      TARGET_LABELS[i].lit = true;
+      World.remove(world, targetBodies[i]);
+    }
+    allTargetsMultiplier = 2;
+    allTargetsMultiTimer = 1800;
+    allTargetsTimer = 180;
+    shakeTrauma = 0.5;
+    startStorm();
+  }
 });
 
 function renderDebug() {
