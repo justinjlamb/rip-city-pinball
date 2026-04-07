@@ -990,10 +990,9 @@ function renderStorm() {
     stormCtx.fillStyle = 'rgba(255,215,0,0.95)';
 
     if (isMobileStorm) {
-      // Center on screen for mobile
-      stormCtx.font = `bold ${Math.floor(sh * 0.05)}px "Press Start 2P", monospace`;
-      stormCtx.fillText('MAKE IT RAIN', sw / 2, sh * 0.12);
-      stormCtx.fillText('x2', sw / 2, sh * 0.12 + sh * 0.07);
+      // Center on screen for mobile — match TAP TO START size (1.4rem ≈ 22px)
+      stormCtx.font = `bold 22px "Press Start 2P", monospace`;
+      stormCtx.fillText('MAKE IT RAIN x2', sw / 2, sh * 0.08);
     } else {
       // Side panels for desktop
       stormCtx.font = `bold ${Math.floor(sh * 0.04)}px "Press Start 2P", monospace`;
