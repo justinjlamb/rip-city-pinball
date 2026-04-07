@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RIP CITY PINBALL v2</title>
+<title>RIP CITY PINBALL</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -269,7 +269,7 @@ canvas { display: block; width: 100%; height: 100%; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
-// RIP CITY PINBALL v2 — Walls from mask contour (wall-data.json)
+// RIP CITY PINBALL — Walls from mask contour (wall-data.json)
 // Table: table-layer0.png (1694 × 2376)
 // ═══════════════════════════════════════════════════════════════
 
@@ -614,14 +614,8 @@ let drainTimer = 0;
 let stuckFrames = 0;
 let launcherGate = null;
 
-// ── PHYSICS ANOMALY DETECTION (temporary — remove before showcase) ──
-const physicsLog = [];
-let anomalyCount = 0;
-let lastBallPos = null;
-const TELEPORT_THRESHOLD = 80;
-const OOB_MARGIN = 50;
 let launcherGateActive = false;
-const SLING_FRONT_DEBUG = new Set();
+const SLING_FRONT = new Set();
 
 // Spring launcher state
 let springCompression = 0;    // current compression in world units
@@ -1693,8 +1687,8 @@ async function loadWalls() {
   const SLING_RIGHT_NORMAL = { x: -0.6, y: -0.8 };
 
   // Front-facing sling walls only (inner face, excluding bottom hook)
-  for (let i = 0; i <= 5; i++) SLING_FRONT_DEBUG.add('sling-' + i);
-  for (let i = 41; i <= 47; i++) SLING_FRONT_DEBUG.add('sling-' + i);
+  for (let i = 0; i <= 5; i++) SLING_FRONT.add('sling-' + i);
+  for (let i = 41; i <= 47; i++) SLING_FRONT.add('sling-' + i);
 
   Events.on(engine, 'collisionStart', event => {
     for (const pair of event.pairs) {
@@ -1705,7 +1699,7 @@ async function loadWalls() {
       if (!ballBody) continue;
 
       // Slingshot hit — reflect velocity off face + kick
-      if (SLING_FRONT_DEBUG.has(otherBody.label)) {
+      if (SLING_FRONT.has(otherBody.label)) {
         const slingIdx = parseInt(otherBody.label.split('-')[1]);
         const n = slingIdx < 24 ? SLING_LEFT_NORMAL : SLING_RIGHT_NORMAL;
         const vx = ballBody.velocity.x, vy = ballBody.velocity.y;
@@ -2349,33 +2343,6 @@ function update() {
       const f = MAX_SPEED / spd;
       Body.setVelocity(ball, { x: v.x * f, y: v.y * f });
     }
-  }
-
-  // ── Physics anomaly detection (logging only) ──
-  if (ball && gameState === 'play' && !rampAnimating) {
-    const bx = ball.position.x, by = ball.position.y;
-    if (lastBallPos) {
-      const dx = bx - lastBallPos.x, dy = by - lastBallPos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > TELEPORT_THRESHOLD) {
-        anomalyCount++;
-        physicsLog.push({ type: 'TELEPORT', from: { ...lastBallPos }, to: { x: bx, y: by }, dist: Math.round(dist) });
-        console.warn('TELEPORT', physicsLog[physicsLog.length - 1]);
-      }
-    }
-    if (bx < -OOB_MARGIN || bx > IMG_W + OOB_MARGIN || by < -OOB_MARGIN) {
-      anomalyCount++;
-      physicsLog.push({ type: 'OOB', pos: { x: Math.round(bx), y: Math.round(by) } });
-      console.warn('OOB', physicsLog[physicsLog.length - 1]);
-    }
-    if (bumperStreakCount >= 6 && bumperStreakTimer > 100) {
-      if (!physicsLog.length || physicsLog[physicsLog.length - 1].type !== 'BUMPER_TRAP' || physicsLog[physicsLog.length - 1].streak !== bumperStreakCount) {
-        anomalyCount++;
-        physicsLog.push({ type: 'BUMPER_TRAP', streak: bumperStreakCount, pos: { x: Math.round(bx), y: Math.round(by) } });
-        console.warn('BUMPER_TRAP', physicsLog[physicsLog.length - 1]);
-      }
-    }
-    lastBallPos = { x: bx, y: by };
   }
 
   // Drain detection (skip while ball is on ramp or caught in scoop, but allow during launching)
@@ -3042,16 +3009,6 @@ function render() {
   // Storm overlay (renders on its own full-screen canvas)
   renderStorm();
 
-  // Physics anomaly counter (temporary debug HUD)
-  if (anomalyCount > 0) {
-    ctx.save();
-    ctx.font = '14px monospace';
-    ctx.fillStyle = 'rgba(255,60,60,0.8)';
-    ctx.textAlign = 'left';
-    ctx.fillText('ANOMALIES: ' + anomalyCount, 10, canvas.height - 10);
-    ctx.restore();
-  }
-
   // End screen shake
   if (shake > 0) ctx.restore();
 }
@@ -3190,65 +3147,6 @@ function drawFlipper(body, side) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DEBUG — Shift+D shows all physics bodies
-// ═══════════════════════════════════════════════════════════════
-
-let debug = false;
-document.addEventListener('keydown', e => {
-  if (e.key === 'D' && e.shiftKey) debug = !debug;
-  // Dev shortcut: R triggers storm mode instantly
-  if (e.key === 'r' && gameState === 'play' && !stormActive && stormPhase === 'idle') {
-    for (let i = 0; i < targetStates.length; i++) {
-      targetStates[i] = false;
-      TARGET_LABELS[i].lit = true;
-      World.remove(world, targetBodies[i]);
-    }
-    allTargetsMultiplier = 2;
-    allTargetsMultiTimer = 1200;
-    allTargetsTimer = 180;
-    shakeTrauma = 0.5;
-    startStorm();
-  }
-});
-
-function renderDebug() {
-  if (!debug) return;
-  const bodies = Composite.allBodies(world);
-  for (const b of bodies) {
-    if (b.label === 'ball') continue;
-    ctx.beginPath();
-    ctx.moveTo(px(b.vertices[0].x), py(b.vertices[0].y));
-    for (let i = 1; i < b.vertices.length; i++)
-      ctx.lineTo(px(b.vertices[i].x), py(b.vertices[i].y));
-    ctx.closePath();
-    // Color by type: green = active sling face, cyan = wall, yellow = corner
-    let color = 'rgba(0,255,255,0.6)';
-    let lineW = 1;
-    if (b.label === 'corner') {
-      color = 'rgba(255,255,0,0.3)';
-    } else if (b.label.startsWith('sling-') && SLING_FRONT_DEBUG.has(b.label)) {
-      color = 'rgba(0,255,0,1)';
-      lineW = 3;
-    } else if (b.label.startsWith('sling-')) {
-      color = 'rgba(255,0,255,0.5)';
-    }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineW;
-    ctx.stroke();
-  }
-
-  if (ball) {
-    ctx.fillStyle = '#0f0';
-    ctx.font = '12px monospace';
-    const v = ball.velocity;
-    const spd = Math.sqrt(v.x * v.x + v.y * v.y).toFixed(1);
-    ctx.fillText(
-      `ball: (${ball.position.x.toFixed(0)}, ${ball.position.y.toFixed(0)}) spd:${spd}`,
-      px(70), py(IMG_H - 30)
-    );
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════
 // INIT — load walls then start game loop
 // ═══════════════════════════════════════════════════════════════
@@ -3265,7 +3163,6 @@ function gameLoop(ts) {
   Engine.update(engine, dt / 2);
 
   render();
-  renderDebug();
   requestAnimationFrame(gameLoop);
 }
 
