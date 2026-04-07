@@ -1932,6 +1932,14 @@ document.addEventListener('keydown', e => {
     else document.exitFullscreen();
     return;
   }
+  // Test trigger: Make It Rain
+  if (e.key === 'r' || e.key === 'R') {
+    if (gameState === 'play' && !stormActive && stormPhase === 'idle') {
+      for (let i = 0; i < targetStates.length; i++) targetStates[i] = false;
+      startStorm();
+    }
+    return;
+  }
   if (gameState === 'gameover') return;
   if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') { if (!isLeftUp) sndFlipper(); isLeftUp = true; }
   if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') { if (!isRightUp) sndFlipper(); isRightUp = true; }
