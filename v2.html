@@ -319,7 +319,7 @@ const sb = typeof supabase !== 'undefined' ? supabase.createClient(SUPABASE_URL,
 async function loadLeaderboard(highlightName) {
   if (!sb) { document.getElementById('lb-status').textContent = 'OFFLINE'; return; }
   try {
-    const { data, error } = await sb.from('pinball_scores').select('player_name, score').order('score', { ascending: false }).limit(25);
+    const { data, error } = await sb.from('pinball_scores').select('player_name, score').order('score', { ascending: false });
     if (error) throw error;
     const ol = document.getElementById('leaderboard');
     ol.innerHTML = '';
@@ -449,14 +449,7 @@ function updateGameOverSequence() {
       const topScore = entries.length > 0 ? parseInt(entries[0].querySelector('.lb-score').textContent.replace(/,/g, '')) || 0 : 0;
       const isNumber1 = gameOverFinalScore > 0 && gameOverFinalScore > topScore;
       // Always insert placeholder if it makes the board
-      let makesBoard = false;
-      if (gameOverFinalScore > 0) {
-        if (entries.length < 25) makesBoard = true;
-        else {
-          const lowestScore = parseInt(entries[entries.length - 1].querySelector('.lb-score').textContent.replace(/,/g, '')) || 0;
-          makesBoard = gameOverFinalScore > lowestScore;
-        }
-      }
+      const makesBoard = gameOverFinalScore > 0;
       if (makesBoard) {
         insertLeaderboardPlaceholder(gameOverFinalScore);
       }
