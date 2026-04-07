@@ -639,6 +639,7 @@ let stormBalls = []; // extra balls spawned during storm
 let stormRaindrops = [];
 let stormSpotAngle = 0;
 let stormFlashTimer = 0;
+let stormPanelRects = null;
 
 const stormCanvas = document.getElementById('storm-canvas');
 const stormCtx = stormCanvas.getContext('2d');
@@ -680,6 +681,7 @@ function endStorm() {
   stormActive = false;
   stormPhase = 'idle';
   stormTimer = 0;
+  stormPanelRects = null;
   stormCanvas.style.display = 'none';
   stormRaindrops = [];
   // Storm balls stay in multiballs array — drain naturally
@@ -878,27 +880,29 @@ function renderStorm() {
   const intensity = 0.5 + progress * 0.5;
 
   // ── Layer 1: Rain (base layer — nothing covers it) ──
-  const rainCount = Math.floor(12 + progress * 25);
-  for (let i = 0; i < rainCount; i++) {
-    stormRaindrops.push({
-      x: Math.random() * (sw + 300) - 150,
-      y: -10 - Math.random() * 60,
-      speed: 18 + Math.random() * 16 + progress * 14,
-      len: 22 + Math.random() * 35,
-      alpha: 0.25 + Math.random() * 0.5,
-    });
+  if (stormRaindrops.length < 500) {
+    const rainCount = Math.floor(12 + progress * 25);
+    for (let i = 0; i < rainCount; i++) {
+      stormRaindrops.push({
+        x: Math.random() * (sw + 300) - 150,
+        y: -10 - Math.random() * 60,
+        speed: 18 + Math.random() * 16 + progress * 14,
+        len: 22 + Math.random() * 35,
+        alpha: 0.25 + Math.random() * 0.5,
+      });
+    }
   }
 
   stormCtx.lineWidth = 1.5;
-  for (let i = stormRaindrops.length - 1; i >= 0; i--) {
+  let writeIdx = 0;
+  for (let i = 0; i < stormRaindrops.length; i++) {
     const r = stormRaindrops[i];
     r.y += r.speed;
     r.x -= r.speed * 0.15;
 
-    if (r.y > sh + r.len) {
-      stormRaindrops.splice(i, 1);
-      continue;
-    }
+    if (r.y > sh + r.len) continue; // skip dead drops
+
+    stormRaindrops[writeIdx++] = r; // compact in place
 
     stormCtx.strokeStyle = `rgba(180,200,230,${r.alpha})`;
     stormCtx.beginPath();
@@ -906,8 +910,7 @@ function renderStorm() {
     stormCtx.lineTo(r.x - r.len * 0.15, r.y + r.len);
     stormCtx.stroke();
   }
-
-  if (stormRaindrops.length > 700) stormRaindrops.splice(0, stormRaindrops.length - 700);
+  stormRaindrops.length = writeIdx; // trim without splice
 
   // ── Layer 2: Dim overlay ──
   const dimAlpha = 0.3 + progress * 0.15;
@@ -962,10 +965,15 @@ function renderStorm() {
   }
 
   // ── Layer 4: "MAKE IT RAIN" flashing on side panels ──
-  const leftPanel = document.getElementById('panel-left');
-  const rightPanel = document.getElementById('panel-right');
-  const lpr = leftPanel ? leftPanel.getBoundingClientRect() : null;
-  const rpr = rightPanel ? rightPanel.getBoundingClientRect() : null;
+  if (!stormPanelRects) {
+    const leftPanel = document.getElementById('panel-left');
+    const rightPanel = document.getElementById('panel-right');
+    stormPanelRects = {
+      lpr: leftPanel ? leftPanel.getBoundingClientRect() : null,
+      rpr: rightPanel ? rightPanel.getBoundingClientRect() : null,
+    };
+  }
+  const { lpr, rpr } = stormPanelRects;
   const flash = Math.floor(Date.now() / 400) % 2 === 0; // flashes every 400ms
 
   if (flash) {
