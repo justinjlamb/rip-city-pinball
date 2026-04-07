@@ -1233,7 +1233,7 @@ const SPRING_DAMPING = 5;
 let scale = 1, offX = 0, offY = 0;
 function resize() {
   const col = document.getElementById('game-col');
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, 1);
   const cssW = col.clientWidth;
   const cssH = col.clientHeight;
   canvas.width = cssW * dpr;
@@ -1926,6 +1926,12 @@ function createBall(x, y) {
 // ═══════════════════════════════════════════════════════════════
 
 document.addEventListener('keydown', e => {
+  // Fullscreen toggle — works in any state
+  if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+    return;
+  }
   if (gameState === 'gameover') return;
   if (e.key === 'z' || e.key === 'Z' || e.key === 'ArrowLeft') { if (!isLeftUp) sndFlipper(); isLeftUp = true; }
   if (e.key === 'm' || e.key === 'M' || e.key === 'ArrowRight') { if (!isRightUp) sndFlipper(); isRightUp = true; }
