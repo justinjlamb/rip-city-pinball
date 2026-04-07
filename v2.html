@@ -15,6 +15,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .backglass { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; width: 100%; }
 .bg-title { font-family: 'Press Start 2P', monospace; font-size: clamp(2.5rem, 4vw, 4.5rem); color: #C8102E; text-shadow: 0 0 30px rgba(200,16,46,0.6), 0 0 60px rgba(200,16,46,0.3), 0 2px 0 #600; letter-spacing: 3px; }
 .bg-title-sub { font-family: 'Press Start 2P', monospace; font-size: clamp(1.2rem, 2vw, 2.2rem); color: #C8102E; text-shadow: 0 0 20px rgba(200,16,46,0.4); letter-spacing: 6px; opacity: 0.8; margin-top: -0.3rem; }
+.bg-credit { font-family: 'Press Start 2P', monospace; font-size: clamp(1rem, 1.8vw, 1.6rem); color: #ccc; margin-top: 0.5rem; letter-spacing: 2px; }
 .bg-divider { width: 80%; height: 2px; background: linear-gradient(90deg, transparent, #333, #555, #333, transparent); margin: 1rem 0; }
 .bg-score-label { font-family: 'Press Start 2P', monospace; font-size: 1.2rem; color: #666; letter-spacing: 4px; }
 .bg-score { font-family: 'Press Start 2P', monospace; font-size: clamp(2.5rem, 4vw, 4rem); color: #FFD700; text-shadow: 0 0 20px rgba(255,215,0,0.5), 0 0 40px rgba(255,215,0,0.2); min-height: 4rem; }
@@ -86,6 +87,7 @@ canvas { display: block; width: 100%; height: 100%; }
 /* ── MOBILE HUD (hidden on desktop) ── */
 #mobile-hud { display: none; }
 #mobile-touch-hint { display: none; }
+#mobile-credit { display: none; }
 
 /* ── MOBILE LAYOUT ── */
 @media (max-width: 900px) {
@@ -139,6 +141,13 @@ canvas { display: block; width: 100%; height: 100%; }
   }
   .touch-zone-left { border-right: 1px solid rgba(255,255,255,0.1); }
 
+  /* Mobile credit at bottom */
+  #mobile-credit {
+    display: block; position: absolute; bottom: 0.5rem; left: 0; right: 0; z-index: 5;
+    text-align: center; font-family: 'Press Start 2P', monospace; font-size: 0.55rem;
+    color: rgba(255,255,255,0.5); letter-spacing: 1px; pointer-events: none;
+  }
+
   /* Mobile start prompt on canvas */
   #mobile-start {
     display: none; position: absolute; inset: 0; z-index: 7;
@@ -182,6 +191,7 @@ canvas { display: block; width: 100%; height: 100%; }
     <div class="backglass">
       <div class="bg-title">RIP CITY</div>
       <div class="bg-title-sub">PINBALL</div>
+      <div class="bg-credit">by Alicia VanderVoort-Walters</div>
       <div class="bg-divider"></div>
       <div class="bg-score-label">SCORE</div>
       <div class="bg-score" id="hud-score">0</div>
@@ -234,6 +244,7 @@ canvas { display: block; width: 100%; height: 100%; }
       <div class="touch-zone">RIGHT<br>FLIPPER</div>
     </div>
     <div id="mobile-start"><div class="mstart-text">TAP TO<br>START</div></div>
+    <div id="mobile-credit">by Alicia VanderVoort-Walters</div>
     <div id="gameover-overlay" class="hidden">
       <div class="gameover-title">GAME OVER</div>
       <div class="gameover-score" id="final-score"></div>
@@ -641,7 +652,7 @@ let allTargetsMultiTimer = 0;
 // ── STORM MODE (x2 multiplier spectacle) ──
 let stormActive = false;
 let stormTimer = 0;
-const STORM_DURATION = 1800; // 30 seconds at 60fps
+const STORM_DURATION = 1200; // 20 seconds at 60fps
 const STORM_BALL_INTERVAL = 300; // new ball every 5 seconds
 let stormBallTimer = 0;
 let stormBalls = []; // extra balls spawned during storm
@@ -832,13 +843,7 @@ function updateStorm() {
     stormBallTimer = STORM_BALL_INTERVAL;
   }
 
-  // Lightning flashes — occasional early, frequent late
-  const lightningChance = stormTimer < 300 ? 0.06 : (stormTimer < 900 ? 0.02 : 0.008);
-  if (Math.random() < lightningChance) {
-    stormFlashTimer = 10;
-    triggerFlash('rgb(200,220,255)', 15, 0.35);
-    sndThunderCrack();
-  }
+  // Lightning removed — no flash or thunder
 
   // Clean up drained storm balls
   for (let i = stormBalls.length - 1; i >= 0; i--) {
@@ -931,7 +936,7 @@ function renderStorm() {
   const cy = sh * 0.4;
   const spotRadius = Math.max(sw, sh) * 0.8;
 
-  stormSpotAngle += 0.02 + (progress > 0.6 ? (progress - 0.6) * 0.08 : 0);
+  stormSpotAngle += 0.008 + (progress > 0.6 ? (progress - 0.6) * 0.03 : 0);
 
   const spots = [];
   for (let s = 0; s < 2; s++) {
@@ -1012,12 +1017,7 @@ function renderStorm() {
     stormCtx.restore();
   }
 
-  // ── Layer 5: Lightning flash ──
-  if (stormFlashTimer > 0) {
-    stormCtx.fillStyle = `rgba(200,220,255,${stormFlashTimer / 12 * 0.5})`;
-    stormCtx.fillRect(0, 0, sw, sh);
-    stormFlashTimer--;
-  }
+  // ── Layer 5: Lightning flash (disabled — too bright) ──
 
   // ── Layer 6: Countdown bar at bottom ──
   const barW = sw * 0.5;
@@ -1451,7 +1451,7 @@ function hitTarget(index, ballBody) {
   // Check if all targets are down
   if (targetStates.every(s => !s)) {
     allTargetsMultiplier = 2;
-    allTargetsMultiTimer = 1800; // 30 seconds
+    allTargetsMultiTimer = 1200; // 20 seconds
     addScore(0, 'ALL ROOMS BOOKED! MAKE IT RAIN!', 'target');
     sndAllTargets();
     allTargetsTimer = 180;
@@ -3204,7 +3204,7 @@ document.addEventListener('keydown', e => {
       World.remove(world, targetBodies[i]);
     }
     allTargetsMultiplier = 2;
-    allTargetsMultiTimer = 1800;
+    allTargetsMultiTimer = 1200;
     allTargetsTimer = 180;
     shakeTrauma = 0.5;
     startStorm();
