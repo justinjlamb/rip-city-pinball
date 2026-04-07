@@ -652,7 +652,6 @@ let stormBallTimer = 0;
 let stormBalls = []; // extra balls spawned during storm
 let stormRaindrops = [];
 let stormSpotAngle = 0;
-let stormFlashTimer = 0;
 let stormPanelRects = null;
 
 const stormCanvas = document.getElementById('storm-canvas');
@@ -777,7 +776,7 @@ function sndThunder() {
 function sndThunderCrack() {
   if (!audioCtx || !audioReady) return;
   const now = audioCtx.currentTime;
-  // Quick crack — for lightning during storm
+  // Quick crack — plays when a storm ball spawns
   const noise = audioCtx.createBufferSource();
   const nBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.25, audioCtx.sampleRate);
   const nd = nBuf.getChannelData(0);
@@ -1011,7 +1010,6 @@ function renderStorm() {
     stormCtx.restore();
   }
 
-  // ── Layer 5: Lightning flash (disabled — too bright) ──
 
   // ── Layer 6: Countdown bar at bottom ──
   const barW = sw * 0.5;
